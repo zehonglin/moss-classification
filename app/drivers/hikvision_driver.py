@@ -1,0 +1,339 @@
+import sys
+import os
+import ctypes
+import numpy as np
+import logging
+import gc
+from app.core.interfaces import BaseCamera
+from PySide6.QtGui import QImage
+
+# Add MvImport to path
+sdk_path = os.path.join(os.getcwd(), "app", "drivers", "hikvision_sdk")
+if sdk_path not in sys.path:
+    sys.path.append(sdk_path)
+
+logger = logging.getLogger(__name__)
+
+try:
+    from MvCameraControl_class import *
+except (ImportError, OSError) as e:
+    # Raise ImportError so SystemController can catch it and fallback to Mock
+    raise ImportError(f"Hikvision SDK failed to load from {sdk_path}: {e}")
+
+
+class HikvisionCamera(BaseCamera):
+    """
+    Hikvision industrial camera driver with memory-optimized frame capture.
+    
+    Memory Management Strategy:
+    - Reuses ctypes buffer for pixel conversion (convert_buf)
+    - Reuses numpy array buffer for RGB data (rgb_buffer)
+    - QImage.copy() is still required due to Qt's memory model, but
+      we trigger periodic GC to prevent memory buildup
+    - All buffers are explicitly cleared on disconnect
+    """
+    
+    # Trigger garbage collection every N frames to prevent memory buildup
+    GC_TRIGGER_INTERVAL = 100
+    
+    # Default frame capture timeout (ms) - shorter for high-frequency capture
+    DEFAULT_TIMEOUT_MS = 500
+    
+    # Maximum consecutive failures before logging a warning
+    MAX_CONSECUTIVE_FAILURES = 5
+    
+    def __init__(self):
+        self.handle = None
+        self.b_is_connected = False
+        self.n_payload_size = 0
+        
+        # Pixel conversion buffer (ctypes) - reused across frames
+        self.convert_buf = None
+        self.convert_buf_size = 0
+        
+        # RGB numpy array buffer - reused across frames of same dimensions
+        self._rgb_buffer = None
+        self._rgb_buffer_shape = (0, 0, 3)
+        
+        # Frame counter for periodic GC
+        self._frame_count = 0
+        
+        # Cache for last frame dimensions to detect resolution changes
+        self._last_width = 0
+        self._last_height = 0
+        
+        # Configurable timeout for frame capture (ms)
+        self._timeout_ms = self.DEFAULT_TIMEOUT_MS
+        
+        # Track consecutive failures for diagnostics
+        self._consecutive_failures = 0
+
+    def connect(self):
+        if MvCamera is None:
+            raise ImportError("Hikvision SDK not found. Please ensure 'app/drivers/hikvision_sdk' exists.")
+
+        # 1. Enum Devices
+        deviceList = MV_CC_DEVICE_INFO_LIST()
+        tlayerType = MV_USB_DEVICE | MV_GIGE_DEVICE
+        
+        ret = MvCamera.MV_CC_EnumDevices(tlayerType, deviceList)
+        if ret != 0:
+            raise Exception(f"Enum devices failed! ret=0x{ret:x}")
+
+        if deviceList.nDeviceNum == 0:
+            raise Exception("No Hikvision devices found!")
+
+        # 2. Select the first device
+        stDeviceList = ctypes.cast(deviceList.pDeviceInfo[0], ctypes.POINTER(MV_CC_DEVICE_INFO)).contents
+
+        # 3. Create Handle
+        self.handle = MvCamera()
+        ret = self.handle.MV_CC_CreateHandle(stDeviceList)
+        if ret != 0:
+            raise Exception(f"Create handle failed! ret=0x{ret:x}")
+
+        # 4. Open Device
+        ret = self.handle.MV_CC_OpenDevice(MV_ACCESS_Exclusive, 0)
+        if ret != 0:
+            raise Exception(f"Open device failed! ret=0x{ret:x}")
+
+        # 5. Get Payload Size
+        stParam = MVCC_INTVALUE()
+        memset(ctypes.byref(stParam), 0, ctypes.sizeof(MVCC_INTVALUE))
+        ret = self.handle.MV_CC_GetIntValue("PayloadSize", stParam)
+        if ret != 0:
+            raise Exception(f"Get payload size failed! ret=0x{ret:x}")
+        self.n_payload_size = stParam.nCurValue
+        
+        # 6. Start Grabbing
+        ret = self.handle.MV_CC_StartGrabbing()
+        if ret != 0:
+            raise Exception(f"Start grabbing failed! ret=0x{ret:x}")
+
+        self.b_is_connected = True
+        self._frame_count = 0
+        logger.info("Hikvision Camera Connected.")
+
+    def disconnect(self):
+        if not self.b_is_connected or self.handle is None:
+            return
+
+        # Stop Grabbing
+        self.handle.MV_CC_StopGrabbing()
+        
+        # Close Device
+        self.handle.MV_CC_CloseDevice()
+        
+        # Destroy Handle
+        self.handle.MV_CC_DestroyHandle()
+        
+        self.b_is_connected = False
+        self.handle = None
+        
+        # Explicitly release all buffers to prevent memory leaks
+        self._cleanup_buffers()
+        
+        logger.info("Hikvision Camera Disconnected.")
+
+    def _cleanup_buffers(self):
+        """Explicitly release all allocated buffers and trigger GC."""
+        self.convert_buf = None
+        self.convert_buf_size = 0
+        self._rgb_buffer = None
+        self._rgb_buffer_shape = (0, 0, 3)
+        self._last_width = 0
+        self._last_height = 0
+        self._frame_count = 0
+        
+        # Force garbage collection to release memory
+        gc.collect()
+        logger.debug("Camera buffers cleaned up and GC triggered.")
+
+    def is_connected(self) -> bool:
+        """Check if the camera is currently connected."""
+        return self.b_is_connected
+
+    def set_exposure(self, value):
+        """Set the camera's exposure time (in microseconds)."""
+        if not self.b_is_connected:
+            return
+
+        if value == "auto":
+            # Set to auto exposure
+            ret = self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Continuous")
+            if ret != 0:
+                logger.error(f"Set auto exposure failed! ret=0x{ret:x}")
+        else:
+            # Set to manual exposure
+            ret = self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Off")
+            if ret != 0:
+                logger.error(f"Set manual exposure failed! ret=0x{ret:x}")
+                return
+
+            # Set the exposure time
+            ret = self.handle.MV_CC_SetFloatValue("ExposureTime", float(value))
+            if ret != 0:
+                logger.error(f"Set exposure time failed! ret=0x{ret:x}")
+
+    def set_resolution(self, width: int, height: int):
+        """Sets the camera resolution. This requires stopping and restarting the stream."""
+        if not self.b_is_connected:
+            logger.warning("Cannot set resolution, camera is not connected.")
+            return
+
+        logger.info(f"Attempting to set resolution to {width}x{height}...")
+
+        # Stop grabbing before changing resolution
+        ret = self.handle.MV_CC_StopGrabbing()
+        if ret != 0:
+            logger.error(f"Failed to stop grabbing before setting resolution! ret=0x{ret:x}")
+            # Attempt to continue, but this may fail
+        
+        # Set Width
+        ret_w = self.handle.MV_CC_SetIntValue("Width", width)
+        if ret_w != 0:
+            logger.error(f"Failed to set camera width to {width}! ret=0x{ret_w:x}")
+
+        # Set Height
+        ret_h = self.handle.MV_CC_SetIntValue("Height", height)
+        if ret_h != 0:
+            logger.error(f"Failed to set camera height to {height}! ret=0x{ret_h:x}")
+        
+        # Restart grabbing
+        ret_start = self.handle.MV_CC_StartGrabbing()
+        if ret_start != 0:
+            logger.error(f"Failed to restart grabbing after setting resolution! ret=0x{ret_start:x}")
+            # This is a critical failure, the camera might be in a bad state
+            self.disconnect() # Try to reset
+            raise Exception("Failed to restart camera stream after resolution change.")
+        
+        if ret_w == 0 and ret_h == 0:
+            logger.info(f"Successfully set resolution to {width}x{height} and restarted stream.")
+        else:
+            logger.warning("Resolution change may have failed. Check previous error logs.")
+
+
+    def set_timeout(self, timeout_ms: int):
+        """
+        Set the frame capture timeout.
+        
+        Args:
+            timeout_ms: Timeout in milliseconds (50-5000)
+        """
+        self._timeout_ms = max(50, min(5000, timeout_ms))
+        logger.info(f"Camera frame timeout set to {self._timeout_ms}ms")
+
+    def _ensure_buffers(self, width: int, height: int) -> bool:
+        """
+        Ensure buffers are allocated for the given frame dimensions.
+        Returns True if buffers were reallocated (resolution changed).
+        """
+        resolution_changed = (width != self._last_width or height != self._last_height)
+        
+        nConvertSize = width * height * 3
+        
+        # Reallocate ctypes buffer if needed
+        if self.convert_buf_size < nConvertSize:
+            self.convert_buf = (ctypes.c_ubyte * nConvertSize)()
+            self.convert_buf_size = nConvertSize
+            logger.info(f"Allocated convert buffer: {nConvertSize} bytes for {width}x{height}")
+        
+        # Reallocate numpy buffer if needed
+        target_shape = (height, width, 3)
+        if self._rgb_buffer is None or self._rgb_buffer_shape != target_shape:
+            self._rgb_buffer = np.empty(target_shape, dtype=np.uint8)
+            self._rgb_buffer_shape = target_shape
+            logger.info(f"Allocated RGB buffer: {target_shape}")
+        
+        if resolution_changed:
+            self._last_width = width
+            self._last_height = height
+            
+        return resolution_changed
+
+    def get_frame(self) -> QImage | None:
+        if not self.b_is_connected:
+            return None
+
+        stFrameInfo = MV_FRAME_OUT_INFO_EX()
+        memset(ctypes.byref(stFrameInfo), 0, ctypes.sizeof(stFrameInfo))
+        
+        stOutFrame = MV_FRAME_OUT()
+        memset(ctypes.byref(stOutFrame), 0, ctypes.sizeof(stOutFrame))
+
+        # Use configurable timeout instead of fixed 1000ms
+        ret = self.handle.MV_CC_GetImageBuffer(stOutFrame, self._timeout_ms)
+        
+        if ret == 0:
+            # Success - reset failure counter
+            self._consecutive_failures = 0
+            
+            width = stOutFrame.stFrameInfo.nWidth
+            height = stOutFrame.stFrameInfo.nHeight
+            pixel_type = stOutFrame.stFrameInfo.enPixelType
+            
+            # Ensure buffers are ready (reuses existing if dimensions match)
+            self._ensure_buffers(width, height)
+
+            stConvertParam = MV_CC_PIXEL_CONVERT_PARAM()
+            memset(ctypes.byref(stConvertParam), 0, ctypes.sizeof(stConvertParam))
+            
+            stConvertParam.nWidth = width
+            stConvertParam.nHeight = height
+            stConvertParam.pSrcData = stOutFrame.pBufAddr
+            stConvertParam.nSrcDataLen = stOutFrame.stFrameInfo.nFrameLen
+            stConvertParam.enSrcPixelType = pixel_type
+            stConvertParam.enDstPixelType = PixelType_Gvsp_RGB8_Packed
+            stConvertParam.pDstBuffer = ctypes.cast(self.convert_buf, ctypes.POINTER(ctypes.c_ubyte))
+            stConvertParam.nDstBufferSize = self.convert_buf_size
+            
+            ret_conv = self.handle.MV_CC_ConvertPixelType(stConvertParam)
+            
+            # Always free the SDK buffer regardless of conversion result
+            self.handle.MV_CC_FreeImageBuffer(stOutFrame)
+
+            if ret_conv != 0:
+                logger.error(f"Convert pixel type failed! ret=0x{ret_conv:x}")
+                return None
+            
+            # Copy data into our reusable numpy buffer
+            # This avoids creating a new numpy array each frame
+            ctypes_array = np.ctypeslib.as_array(self.convert_buf)
+            np.copyto(self._rgb_buffer, ctypes_array[:height*width*3].reshape((height, width, 3)))
+            
+            # Create QImage from our buffer
+            # Note: .copy() is required because QImage doesn't own the buffer data
+            # However, we're now reusing the source buffer, reducing allocations
+            image = QImage(
+                self._rgb_buffer.data,
+                width, height,
+                width * 3,
+                QImage.Format_RGB888
+            ).copy()
+            
+            # Increment frame counter and trigger periodic GC
+            self._frame_count += 1
+            if self._frame_count >= self.GC_TRIGGER_INTERVAL:
+                self._frame_count = 0
+                gc.collect()
+                logger.debug("Periodic GC triggered after 100 frames")
+            
+            return image
+
+        else:
+            # Frame capture failed
+            self._consecutive_failures += 1
+            
+            # Log with different severity based on failure count
+            if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
+                logger.warning(
+                    f"Camera: {self._consecutive_failures} consecutive frame failures! "
+                    f"ret=0x{ret:x}. Check camera connection or adjust timeout."
+                )
+                # Reset counter to avoid spamming logs
+                self._consecutive_failures = 0
+            else:
+                logger.debug(f"Get frame failed! ret=0x{ret:x} (failure #{self._consecutive_failures})")
+            
+            return None
+

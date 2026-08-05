@@ -1,0 +1,236 @@
+/* Global Settings */
+QWidget {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    font-size: 14px;
+}
+
+/* Main Window */
+QMainWindow {
+    background-color: #1e1e1e;
+}
+
+/* Splitter */
+QSplitter::handle {
+    background-color: #333333;
+    width: 2px;
+}
+
+/* Group Boxes and Frames */
+QFrame {
+    border: none;
+}
+
+QFrame#Sidebar {
+    background-color: #252526;
+    border-right: 1px solid #333333;
+}
+
+QFrame#ContentArea {
+    background-color: #1e1e1e;
+}
+
+QFrame#ResultPanel {
+    background-color: #252526;
+    border-radius: 8px;
+    margin: 10px;
+}
+
+
+
+/* Labels */
+QLabel {
+    color: #cccccc;
+}
+
+QLabel#HeaderLabel {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+    padding: 10px 0;
+}
+
+QLabel#ResultLabel {
+    font-size: 24px;
+    font-weight: bold;
+    color: #4CAF50; /* Moss Green */
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #3a3a3a;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #4a4a4a;
+    border-color: #666666;
+}
+
+QPushButton:pressed {
+    background-color: #2a2a2a;
+}
+
+QPushButton:disabled {
+    background-color: #2d2d2d;
+    color: #666666;
+    border-color: #333333;
+}
+
+/* Primary Button (Start) */
+QPushButton#StartButton {
+    background-color: #2e7d32; /* Dark Green */
+    border: 1px solid #2e7d32;
+}
+
+QPushButton#StartButton:hover {
+    background-color: #388e3c;
+    border-color: #388e3c;
+}
+
+QPushButton#StartButton:pressed {
+    background-color: #1b5e20;
+}
+
+/* Danger Button (Stop) */
+QPushButton#StopButton {
+    background-color: #c62828; /* Dark Red */
+    border: 1px solid #c62828;
+}
+
+QPushButton#StopButton:hover {
+    background-color: #d32f2f;
+    border-color: #d32f2f;
+}
+
+/* Input Fields */
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #333333;
+    border: 1px solid #444444;
+    border-radius: 4px;
+    padding: 6px;
+    color: #ffffff;
+    selection-background-color: #2e7d32;
+    min-height: 32px; /* Ensure consistent height */
+}
+
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border: 1px solid #4CAF50;
+}
+
+QSpinBox {
+    /* The default buttons will be hidden, so it acts like a line edit */
+    text-align: center;
+    font-weight: bold;
+}
+
+/* Custom '+' and '-' buttons for value controls */
+QPushButton#ValueButton {
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+    background-color: #007ACC; /* A nice blue */
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 10px; /* Makes it circular */
+    border: 1px solid #007ACC;
+}
+
+QPushButton#ValueButton:hover {
+    background-color: #008ae6;
+    border-color: #008ae6;
+}
+
+QPushButton#ValueButton:pressed {
+    background-color: #006bb3;
+}
+
+/* Checkbox */
+QCheckBox {
+    color: #e0e0e0;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #ffffff;
+    border-radius: 3px;
+    background: #333333;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #333333;
+    border-color: #ffffff;
+    image: url(app/ui/resources/check.svg);
+}
+
+QCheckBox::indicator:unchecked:hover {
+    border-color: #4CAF50;
+}
+
+/* Sliders */
+QSlider::groove:horizontal {
+    border: 1px solid #444444;
+    height: 6px;
+    background: #333333;
+    margin: 2px 0;
+    border-radius: 3px;
+}
+
+QSlider::handle:horizontal {
+    background: #4CAF50;
+    border: 1px solid #4CAF50;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+}
+
+/* List Widget (History) */
+QListWidget {
+    background-color: #252526;
+    border: 1px solid #333333;
+    border-radius: 6px;
+    outline: none;
+}
+
+QListWidget::item {
+    background-color: #2d2d2d;
+    margin: 4px;
+    border-radius: 4px;
+}
+
+QListWidget::item:selected {
+    background-color: #3a3a3a;
+    border: 1px solid #4CAF50;
+}
+
+QListWidget::item:hover {
+    background-color: #333333;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #1e1e1e;
+    width: 10px;
+    margin: 0px 0px 0px 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #444444;
+    min-height: 20px;
+    border-radius: 5px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    border: none;
+    background: none;
+}

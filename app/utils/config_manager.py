@@ -1,0 +1,202 @@
+import json
+import os
+import logging
+import threading
+import atexit
+
+logger = logging.getLogger(__name__)
+
+
+class ConfigManager:
+    """
+    Configuration manager with debounced file writes.
+    
+    Performance Optimization:
+    - set() marks config as dirty but doesn't write immediately
+    - Debounce timer delays writes to batch multiple changes
+    - flush() available for immediate save when needed
+    - Auto-save on program exit via atexit
+    
+    This reduces disk I/O from potentially hundreds of writes
+    to just a few writes during user interaction.
+    """
+    
+    # Debounce delay in seconds - wait this long after last change before saving
+    SAVE_DEBOUNCE_SECONDS = 2.0
+    
+    def __init__(self, config_filename="config/config.json"):
+        self.config_filename = config_filename
+        self.config_data = {}
+        self.default_config = {
+            "camera_settings": {
+                "capture_frequency_ms": 1000,
+                "exposure": "auto",
+                "focus": "auto",
+                "aperture": "f/2.8",
+                "driver_type": "mock"  # Added for completeness
+            },
+            "conveyor_settings": {
+                "speed_mm_per_s": 50
+            },
+            "model_settings": {
+                "current_model_name": "efficientnet_b0",
+                "models_directory": "models/"
+            },
+            "data_paths": {
+                "collected_data_directory": "data/images/",
+                "db_filename": "data/moss.db"
+            }
+        }
+        
+        # Debounce mechanism
+        self._dirty = False
+        self._save_timer: threading.Timer | None = None
+        self._lock = threading.Lock()
+        
+        # Register cleanup on exit
+        atexit.register(self._cleanup)
+        
+        self.load_config()
+
+    def load_config(self):
+        if os.path.exists(self.config_filename):
+            try:
+                with open(self.config_filename, 'r', encoding='utf-8') as f:
+                    self.config_data = json.load(f)
+                # Merge with defaults to ensure all keys are present
+                self.config_data = self._merge_configs(self.default_config, self.config_data)
+                logger.info(f"Successfully loaded and merged config from {self.config_filename}")
+            except json.JSONDecodeError:
+                logger.error(f"Error decoding JSON from {self.config_filename}. Loading default config.")
+                self.config_data = self.default_config
+            except Exception as e:
+                logger.exception(f"An unexpected error occurred loading config: {e}. Loading default config.")
+                self.config_data = self.default_config
+        else:
+            logger.warning(f"{self.config_filename} not found. Creating with default config.")
+            self.config_data = self.default_config
+            self._save_now()  # Save defaults if file doesn't exist
+
+    def _save_now(self):
+        """Actually write config to disk."""
+        try:
+            os.makedirs(os.path.dirname(self.config_filename), exist_ok=True)
+            with open(self.config_filename, 'w', encoding='utf-8') as f:
+                json.dump(self.config_data, f, indent=4, ensure_ascii=False)
+            self._dirty = False
+            logger.debug(f"Config saved to {self.config_filename}")
+        except Exception as e:
+            logger.exception(f"Error saving config to {self.config_filename}:")
+
+    def _schedule_save(self):
+        """Schedule a debounced save operation."""
+        with self._lock:
+            # Cancel any pending save
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+            
+            # Schedule new save after debounce delay
+            self._save_timer = threading.Timer(
+                self.SAVE_DEBOUNCE_SECONDS,
+                self._debounced_save
+            )
+            self._save_timer.daemon = True  # Don't block program exit
+            self._save_timer.start()
+
+    def _debounced_save(self):
+        """Called by timer to actually save."""
+        with self._lock:
+            if self._dirty:
+                self._save_now()
+                self._save_timer = None
+
+    def save_config(self):
+        """
+        Mark config as dirty and schedule a debounced save.
+        For backward compatibility, this triggers a delayed save.
+        Use flush() for immediate save.
+        """
+        self._dirty = True
+        self._schedule_save()
+
+    def flush(self):
+        """
+        Immediately save config to disk if there are pending changes.
+        Call this before critical operations or program exit.
+        """
+        with self._lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+            
+            if self._dirty:
+                self._save_now()
+
+    def _cleanup(self):
+        """Called on program exit to ensure config is saved."""
+        self.flush()
+
+    def get(self, key_path, default=None):
+        keys = key_path.split('.')
+        value = self.config_data
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+        return value
+
+    def set(self, key_path, value):
+        """
+        Set a config value. The save is debounced to reduce disk I/O.
+        Multiple rapid calls will result in a single file write.
+        """
+        keys = key_path.split('.')
+        current = self.config_data
+        for i, key in enumerate(keys):
+            if i == len(keys) - 1:
+                # Only mark dirty if value actually changed
+                if current.get(key) != value:
+                    current[key] = value
+                    self.save_config()  # This now debounces
+            else:
+                if not isinstance(current, dict):
+                    logger.error(f"Cannot set {key_path}: intermediate key '{key}' is not a dictionary.")
+                    return
+                if key not in current:
+                    current[key] = {}
+                current = current[key]
+
+    def set_many(self, updates: dict):
+        """
+        Set multiple config values at once.
+        More efficient than multiple set() calls.
+        
+        Args:
+            updates: Dict of {key_path: value} pairs
+        """
+        changed = False
+        for key_path, value in updates.items():
+            keys = key_path.split('.')
+            current = self.config_data
+            for i, key in enumerate(keys):
+                if i == len(keys) - 1:
+                    if current.get(key) != value:
+                        current[key] = value
+                        changed = True
+                else:
+                    if key not in current:
+                        current[key] = {}
+                    current = current[key]
+        
+        if changed:
+            self.save_config()
+
+    def _merge_configs(self, default, custom):
+        for key, value in default.items():
+            if key not in custom:
+                custom[key] = value
+            elif isinstance(value, dict) and isinstance(custom[key], dict):
+                custom[key] = self._merge_configs(value, custom[key])
+        return custom
+

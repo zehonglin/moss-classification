@@ -1,0 +1,22 @@
+{
+    "conveyor_settings": {
+        "speed_mm_per_s": 51
+    },
+    "model_settings": {
+        "current_model_name": "mobilenetv2_best.pth",
+        "models_directory": "models/"
+    },
+    "data_paths": {
+        "collected_data_directory": "data/images/",
+        "db_filename": "data/moss.db"
+    },
+    "camera_settings": {
+        "driver_type": "hikvision",
+        "capture_frequency_ms": 1000,
+        "resolution_width": 2000,
+        "resolution_height": 2000,
+        "exposure": 85000,
+        "focus": "auto",
+        "aperture": "f/2.8"
+    }
+}

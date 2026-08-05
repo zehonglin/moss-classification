@@ -1,0 +1,59 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 测试 / 类型 / lint 缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+.hypothesis/
+
+# ===== 数据与模型产物（体积大，不入库）=====
+# 训练 / 推理数据集
+data/images/
+# 数据库（运行时生成）
+data/*.db
+data/*.db-journal
+data/*.sqlite*
+
+# 模型权重（保留 *.json 元数据）
+models/*.pth
+models/*.pt
+models/*.onnx
+models/*.bin
+models/*.safetensors
+# 模型下载缓存
+models/hub/
+models/xet/
+
+# ===== 运行日志 =====
+logs/*.log
+logs/*.log.*
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== 编辑器 / IDE / 系统 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
