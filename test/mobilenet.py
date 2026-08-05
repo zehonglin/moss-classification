@@ -11,12 +11,12 @@ from torch.utils.data import DataLoader
 from torchvision import models, transforms, datasets
 from PIL import Image
 
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFileDialog, QLineEdit, QSpinBox,
                              QDoubleSpinBox, QTextEdit, QProgressBar, QTabWidget, QSplitter,
                              QMessageBox, QGridLayout, QGroupBox, QScrollArea)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap, QAction
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QPixmap, QAction
 
 
 # ==========================================
@@ -25,9 +25,9 @@ from PyQt6.QtGui import QPixmap, QAction
 
 class TrainingWorker(QThread):
     """后台训练线程"""
-    log_signal = pyqtSignal(str)
-    progress_signal = pyqtSignal(int)
-    finished_signal = pyqtSignal()
+    log_signal = Signal(str)
+    progress_signal = Signal(int)
+    finished_signal = Signal()
 
     def __init__(self, config):
         super().__init__()

@@ -1,0 +1,14 @@
+# 苔藓识别系统 - 运行依赖
+# Python 3.11（开发环境: conda env TaiXian, CUDA 12.8, NVIDIA GPU）
+#
+# ⚠ torch / torchvision 带 +cu128 后缀，必须先单独从 PyTorch 官方源安装：
+#   pip install torch==2.9.1+cu128 torchvision==0.24.1+cu128 \
+#       --index-url https://download.pytorch.org/whl/cu128
+#
+# 然后安装其余依赖:
+#   pip install -r requirements.txt
+
+PySide6==6.9.3
+timm==1.0.22
+Pillow==12.0.0
+numpy==2.3.5
