@@ -2,7 +2,7 @@ import logging
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QSplitter, QLabel,
     QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QFormLayout,
-    QComboBox, QSpinBox, QSlider, QLineEdit, QInputDialog, QListWidget,
+    QComboBox, QSpinBox, QDoubleSpinBox, QSlider, QLineEdit, QInputDialog, QListWidget,
     QListWidgetItem, QCheckBox, QAbstractSpinBox
 )
 from PySide6.QtCore import Qt
@@ -23,6 +23,7 @@ class MainWindow(QMainWindow):
         self.controller = SystemController(self.config)
         self.selected_history_item = None
         self.status = STATUS_IDLE
+        self.confidence_threshold = self.config.get("model_settings.confidence_threshold", 0.6)
         
         # Connect Controller Signals
         self.controller.image_updated.connect(self._update_image_display)
@@ -197,6 +198,14 @@ class MainWindow(QMainWindow):
         self.model_combo.setCurrentText(self.config.get("model_settings.current_model_name", "efficientnet_b0"))
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         model_layout.addRow("选择模型:", self.model_combo)
+
+        self.threshold_spinbox = QDoubleSpinBox()
+        self.threshold_spinbox.setRange(0.0, 1.0)
+        self.threshold_spinbox.setSingleStep(0.05)
+        self.threshold_spinbox.setDecimals(2)
+        self.threshold_spinbox.setValue(self.confidence_threshold)
+        self.threshold_spinbox.valueChanged.connect(self._on_threshold_changed)
+        model_layout.addRow("置信度阈值:", self.threshold_spinbox)
         scroll_layout.addWidget(model_group)
         
         scroll_layout.addStretch()
@@ -300,6 +309,12 @@ class MainWindow(QMainWindow):
         self.model_combo.setEnabled(True)
         self._update_status(self.controller.status_updated.emit(STATUS_PREVIEWING)) # Refresh UI state
 
+    def _on_threshold_changed(self, value):
+        """置信度阈值变更：低于此值的结果标记为"需复检"。"""
+        self.confidence_threshold = float(value)
+        self.config.set("model_settings.confidence_threshold", self.confidence_threshold)
+        logger.info(f"Confidence threshold set to {self.confidence_threshold}")
+
     def _on_start_clicked(self):
         self.config.set("conveyor_settings.speed_mm_per_s", self.speed_spinbox.value())
         self.config.set("camera_settings.capture_frequency_ms", self.freq_spinbox.value())
@@ -357,10 +372,11 @@ class MainWindow(QMainWindow):
             record_data['timestamp'],
             record_data['prediction'],
             record_data['confidence'],
-            record_data['corrected_label'] if record_data['corrected_label'] else "None"
+            record_data['corrected_label'] if record_data['corrected_label'] else "None",
+            confidence_threshold=self.confidence_threshold
         )
         item.setSizeHint(item_widget.sizeHint())
-        
+
         # Insert at the top and then set the custom widget for that item
         self.history_list_widget.insertItem(0, item)
         self.history_list_widget.setItemWidget(item, item_widget)
@@ -385,8 +401,16 @@ class MainWindow(QMainWindow):
 
 
     def _display_record_info(self, record_id, prediction, confidence, corrected_label=None):
-        text = f"{prediction}  {confidence:.1%}"
-        if corrected_label: text += f" (已纠错: {corrected_label})"
+        is_corrected = bool(corrected_label)
+        needs_review = (not is_corrected) and isinstance(confidence, (int, float)) and confidence < self.confidence_threshold
+        if needs_review:
+            text = f"⚠️ 需复检  {prediction}  {confidence:.1%}"
+            self.result_label.setStyleSheet("color: #FFA726;")  # 橙色:低置信度
+        else:
+            text = f"{prediction}  {confidence:.1%}"
+            self.result_label.setStyleSheet("")  # 恢复 QSS 默认
+        if corrected_label:
+            text += f" (已纠错: {corrected_label})"
         self.result_label.setText(text)
         self.last_record_id = record_id
         self.last_prediction = prediction
@@ -472,7 +496,8 @@ class MainWindow(QMainWindow):
                     record_data[1], # timestamp
                     record_data[3], # prediction
                     record_data[4], # confidence
-                    record_data[5]  # new corrected_label
+                    record_data[5],  # new corrected_label
+                    confidence_threshold=self.confidence_threshold
                 )
                 item.setSizeHint(new_widget.sizeHint())
                 self.history_list_widget.setItemWidget(item, new_widget)
@@ -512,7 +537,8 @@ class MainWindow(QMainWindow):
                 record[1], # timestamp
                 record[3], # prediction
                 record[4], # confidence
-                record[5] if record[5] else "None" # corrected_label
+                record[5] if record[5] else "None", # corrected_label
+                confidence_threshold=self.confidence_threshold
             )
             item.setSizeHint(item_widget.sizeHint())
             self.history_list_widget.addItem(item)

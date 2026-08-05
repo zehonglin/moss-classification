@@ -16,7 +16,7 @@ class HistoryItemWidget(QWidget):
     # Thumbnail size constant
     THUMBNAIL_SIZE = 60
     
-    def __init__(self, image_path, timestamp_str, original_pred, confidence, corrected_label):
+    def __init__(self, image_path, timestamp_str, original_pred, confidence, corrected_label, confidence_threshold=0.6):
         super().__init__()
         
         # Main horizontal layout
@@ -86,13 +86,16 @@ class HistoryItemWidget(QWidget):
         pred_corr_horizontal_layout.setSpacing(8)
 
         # Prediction Label with confidence (Left of Row 2)
+        is_corrected = corrected_label and corrected_label != "None"
+        needs_review = (not is_corrected) and isinstance(confidence, (int, float)) and confidence < confidence_threshold
         confidence_str = f" ({confidence:.1%})" if isinstance(confidence, (int, float)) else ""
-        prediction_label = QLabel(f"{original_pred}{confidence_str}")
+        prefix = "⚠️ " if needs_review else ""
+        prediction_label = QLabel(f"{prefix}{original_pred}{confidence_str}")
         font = prediction_label.font()
         font.setPointSize(14)
         font.setBold(True)
         prediction_label.setFont(font)
-        prediction_label.setStyleSheet("color: #ECEFF1;")
+        prediction_label.setStyleSheet("color: #FFA726;" if needs_review else "color: #ECEFF1;")
 
         # Correction Label (Right of Row 2)
         correction_label = QLabel("")

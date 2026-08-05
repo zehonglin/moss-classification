@@ -40,7 +40,8 @@ class ConfigManager:
             },
             "model_settings": {
                 "current_model_name": "efficientnet_b0",
-                "models_directory": "models/"
+                "models_directory": "models/",
+                "confidence_threshold": 0.6
             },
             "data_paths": {
                 "collected_data_directory": "data/images/",
