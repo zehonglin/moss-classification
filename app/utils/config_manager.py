@@ -45,7 +45,8 @@ class ConfigManager:
             },
             "data_paths": {
                 "collected_data_directory": "data/images/",
-                "db_filename": "data/moss.db"
+                "db_filename": "data/moss.db",
+                "corrections_directory": "data/corrections/"
             }
         }
         

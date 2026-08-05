@@ -169,6 +169,21 @@ class DatabaseService:
                 logger.error(f"Database error in get_recent_records: {e}")
                 return []
 
+    def get_record(self, record_id: int):
+        """按 id 查单条记录。返回 (id, timestamp, image_path, prediction, confidence, corrected_label) 或 None。"""
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, timestamp, image_path, prediction, confidence, corrected_label
+                    FROM records WHERE id = ?
+                ''', (record_id,))
+                return cursor.fetchone()
+            except sqlite3.Error as e:
+                logger.error(f"Database error in get_record: {e}")
+                return None
+
     def get_record_count(self) -> int:
         """
         Get total number of records in the database.

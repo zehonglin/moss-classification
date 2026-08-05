@@ -9,6 +9,9 @@ from app.utils.config_manager import ConfigManager
 from app.utils.disk_monitor import DiskSpaceMonitor
 import time
 import os
+import json
+import shutil
+import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -417,6 +420,46 @@ class SystemController(QObject):
 
     def correct_prediction(self, record_id, corrected_label):
         self.db_service.update_correction(record_id, corrected_label)
+        self._export_correction_sample(record_id, corrected_label)
+
+    def _export_correction_sample(self, record_id, corrected_label):
+        """
+        把纠错样本归档到 corrections/<corrected_label>/，形成 ImageFolder 兼容结构，
+        便于事后用纠错数据重训。原图与 DB 记录保持不变。
+        """
+        record = self.db_service.get_record(record_id)
+        if not record:
+            logger.warning(f"Cannot export correction: record {record_id} not found.")
+            return
+        _, timestamp, image_path, original_pred, confidence, _ = record
+        if not image_path or not os.path.exists(image_path):
+            logger.warning(f"Cannot export correction: source image not found ({image_path}).")
+            return
+
+        corrections_dir = self.config.get("data_paths.corrections_directory", "data/corrections/")
+        # 清理标签中的路径非法字符（操作员输入兜底）
+        safe_label = re.sub(r'[<>:"/\\|?*]', '_', str(corrected_label)).strip() or "unknown"
+        label_dir = os.path.join(corrections_dir, safe_label)
+        os.makedirs(label_dir, exist_ok=True)
+
+        base = f"{record_id}_{original_pred}"
+        dest_img = os.path.join(label_dir, base + ".jpg")
+        dest_meta = os.path.join(label_dir, base + ".json")
+        try:
+            shutil.copy(image_path, dest_img)
+            meta = {
+                "record_id": record_id,
+                "timestamp": timestamp,
+                "source_image": image_path,
+                "original_prediction": original_pred,
+                "confidence": confidence,
+                "corrected_label": corrected_label,
+            }
+            with open(dest_meta, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            logger.info(f"Exported correction sample -> {dest_img}")
+        except Exception as e:
+            logger.error(f"Failed to export correction sample: {e}")
 
     def get_recent_records(self, limit=50):
         return self.db_service.get_recent_records(limit)
