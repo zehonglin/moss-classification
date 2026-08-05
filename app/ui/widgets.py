@@ -16,7 +16,7 @@ class HistoryItemWidget(QWidget):
     # Thumbnail size constant
     THUMBNAIL_SIZE = 60
     
-    def __init__(self, image_path, timestamp_str, original_pred, confidence, corrected_label, confidence_threshold=0.6):
+    def __init__(self, image_path, thumbnail_path, timestamp_str, original_pred, confidence, corrected_label, confidence_threshold=0.6):
         super().__init__()
         
         # Main horizontal layout
@@ -32,7 +32,8 @@ class HistoryItemWidget(QWidget):
         # Optimized thumbnail loading using QImageReader
         # This loads the image at the target size directly, saving memory
         try:
-            reader = QImageReader(image_path)
+            thumb_src = thumbnail_path if thumbnail_path else image_path
+            reader = QImageReader(thumb_src)
             if reader.canRead():
                 # Get original size to calculate aspect ratio
                 original_size = reader.size()

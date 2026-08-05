@@ -358,6 +358,7 @@ class MainWindow(QMainWindow):
             record_data['id'],
             record_data['timestamp'],
             record_data['image_path'],
+            record_data.get('thumbnail_path'),
             record_data['prediction'],
             record_data['confidence'],
             record_data['corrected_label']
@@ -369,6 +370,7 @@ class MainWindow(QMainWindow):
         item.setData(Qt.UserRole, record_tuple)
         item_widget = HistoryItemWidget(
             record_data['image_path'],
+            record_data.get('thumbnail_path'),
             record_data['timestamp'],
             record_data['prediction'],
             record_data['confidence'],
@@ -488,15 +490,16 @@ class MainWindow(QMainWindow):
             record_data = list(item.data(Qt.UserRole)) # Get a mutable copy
             if record_data and record_data[0] == record_id:
                 # Update the data stored in the item
-                record_data[5] = corrected_label
+                record_data[6] = corrected_label
                 item.setData(Qt.UserRole, tuple(record_data))
                 # Re-create the widget with the new data
                 new_widget = HistoryItemWidget(
                     record_data[2], # image_path
+                    record_data[3], # thumbnail_path
                     record_data[1], # timestamp
-                    record_data[3], # prediction
-                    record_data[4], # confidence
-                    record_data[5],  # new corrected_label
+                    record_data[4], # prediction
+                    record_data[5], # confidence
+                    record_data[6],  # new corrected_label
                     confidence_threshold=self.confidence_threshold
                 )
                 item.setSizeHint(new_widget.sizeHint())
@@ -516,7 +519,7 @@ class MainWindow(QMainWindow):
             self.selected_history_item = item
             record_data = item.data(Qt.UserRole)
             if record_data:
-                r_id, _, img_path, pred, conf, corr_label = record_data
+                r_id, _, img_path, thumb_path, pred, conf, corr_label = record_data
                 logger.info(f"History item clicked: Record ID {r_id}, Path: {img_path}")
                 self._display_record_info(r_id, pred, conf, corr_label)
                 pixmap = QPixmap(img_path)
@@ -534,10 +537,11 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, record)
             item_widget = HistoryItemWidget(
                 record[2], # image_path
+                record[3], # thumbnail_path
                 record[1], # timestamp
-                record[3], # prediction
-                record[4], # confidence
-                record[5] if record[5] else "None", # corrected_label
+                record[4], # prediction
+                record[5], # confidence
+                record[6] if record[6] else "None", # corrected_label
                 confidence_threshold=self.confidence_threshold
             )
             item.setSizeHint(item_widget.sizeHint())

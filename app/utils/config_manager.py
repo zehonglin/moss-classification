@@ -47,6 +47,11 @@ class ConfigManager:
                 "collected_data_directory": "data/images/",
                 "db_filename": "data/moss.db",
                 "corrections_directory": "data/corrections/"
+            },
+            "storage": {
+                "image_format": "png",
+                "thumbnail_max_size": 300,
+                "thumbnail_quality": 85
             }
         }
         

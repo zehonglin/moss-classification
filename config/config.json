@@ -12,6 +12,11 @@
         "db_filename": "data/moss.db",
         "corrections_directory": "data/corrections/"
     },
+    "storage": {
+        "image_format": "png",
+        "thumbnail_max_size": 300,
+        "thumbnail_quality": 85
+    },
     "camera_settings": {
         "driver_type": "hikvision",
         "capture_frequency_ms": 1000,

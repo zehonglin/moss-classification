@@ -79,12 +79,19 @@ class DatabaseService:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
                     image_path TEXT NOT NULL,
+                    thumbnail_path TEXT,
                     prediction TEXT,
                     confidence REAL,
                     corrected_label TEXT,
                     is_corrected INTEGER DEFAULT 0
                 )
             ''')
+
+            # migration: 为旧库补 thumbnail_path 列（不丢数据）
+            cols = [row[1] for row in cursor.execute("PRAGMA table_info(records)").fetchall()]
+            if 'thumbnail_path' not in cols:
+                cursor.execute("ALTER TABLE records ADD COLUMN thumbnail_path TEXT")
+                logger.info("Migrated records table: added thumbnail_path column.")
             
             # Create index for faster queries by timestamp (common query pattern)
             cursor.execute('''
@@ -95,7 +102,7 @@ class DatabaseService:
             conn.commit()
             logger.info("Database schema initialized.")
 
-    def add_record(self, timestamp, image_path, prediction, confidence) -> int:
+    def add_record(self, timestamp, image_path, prediction, confidence, thumbnail_path=None) -> int:
         """
         Add a new inference record.
         Thread-safe: uses locking for concurrent access.
@@ -108,9 +115,9 @@ class DatabaseService:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
-                    INSERT INTO records (timestamp, image_path, prediction, confidence)
-                    VALUES (?, ?, ?, ?)
-                ''', (timestamp, str(image_path), prediction, confidence))
+                    INSERT INTO records (timestamp, image_path, thumbnail_path, prediction, confidence)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (timestamp, str(image_path), str(thumbnail_path) if thumbnail_path else None, prediction, confidence))
                 conn.commit()
                 record_id = cursor.lastrowid
                 return record_id
@@ -158,7 +165,7 @@ class DatabaseService:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, timestamp, image_path, prediction, confidence, corrected_label
+                    SELECT id, timestamp, image_path, thumbnail_path, prediction, confidence, corrected_label
                     FROM records
                     ORDER BY id DESC
                     LIMIT ?
@@ -176,7 +183,7 @@ class DatabaseService:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, timestamp, image_path, prediction, confidence, corrected_label
+                    SELECT id, timestamp, image_path, thumbnail_path, prediction, confidence, corrected_label
                     FROM records WHERE id = ?
                 ''', (record_id,))
                 return cursor.fetchone()

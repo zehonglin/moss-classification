@@ -12,6 +12,8 @@ import os
 import json
 import shutil
 import re
+import numpy as np
+from PIL import Image
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,15 @@ logger = logging.getLogger(__name__)
 STATUS_IDLE = "IDLE"  # Disconnected
 STATUS_PREVIEWING = "PREVIEWING" # Camera connected, live view
 STATUS_RUNNING = "RUNNING" # Full processing loop
+
+
+def _qimage_to_pil(q_image):
+    """QImage → PIL.Image(RGB)。直接读取像素缓冲，不依赖 Qt imageformats 插件
+    （本机 PySide6 缺 JPEG 插件，QImage.save / QImageReader 对 JPEG 均不可用）。"""
+    q = q_image.convertToFormat(QImage.Format.Format_RGB888)
+    ptr = q.bits()
+    arr = np.array(ptr).reshape(q.height(), q.width(), 3)
+    return Image.fromarray(arr, "RGB")
 
 
 class SystemWorker(QObject):
@@ -118,15 +129,28 @@ class SystemWorker(QObject):
                         # Warning: emit signal but continue
                         self.disk_space_warning.emit(disk_message)
                     
-                    # 4. Save Image to Disk
+                    # 4. Save Image to Disk (原图 + 缩略图，均用 PIL，不依赖 Qt imageformats 插件)
                     save_img_start_time = time.time()
                     now = datetime.now()
                     timestamp_iso = now.isoformat()
                     timestamp_str = now.strftime("%Y%m%d_%H%M%S_%f")
-                    filename = f"moss_{timestamp_str}.jpg"
+                    img_format = self.config.get("storage.image_format", "png").lower()
                     os.makedirs(save_dir, exist_ok=True)
-                    image_path = os.path.join(save_dir, filename)
-                    image.save(image_path)
+                    pil_img = _qimage_to_pil(image)
+                    # 原图（训练 / 大图查看）
+                    image_path = os.path.join(save_dir, f"moss_{timestamp_str}.{img_format}")
+                    if img_format == "png":
+                        pil_img.save(image_path, "PNG")
+                    else:
+                        pil_img.save(image_path, "JPEG", quality=self.config.get("storage.image_quality", 95))
+                    # 缩略图（界面展示用；用 PNG，因本机 Qt 无 JPEG 解码插件，QImageReader 读不了 JPEG）
+                    thumb_dir = os.path.join(save_dir, "thumb")
+                    os.makedirs(thumb_dir, exist_ok=True)
+                    thumb_path = os.path.join(thumb_dir, f"moss_{timestamp_str}.png")
+                    thumb_size = self.config.get("storage.thumbnail_max_size", 300)
+                    thumb = pil_img.copy()
+                    thumb.thumbnail((thumb_size, thumb_size))
+                    thumb.save(thumb_path, "PNG")
                     save_img_duration = (time.time() - save_img_start_time) * 1000
                     
                     if self._stop_event.is_set():
@@ -134,12 +158,13 @@ class SystemWorker(QObject):
                     
                     # 5. Save to DB
                     save_db_start_time = time.time()
-                    record_id = self.db_service.add_record(timestamp_iso, image_path, prediction, confidence)
+                    record_id = self.db_service.add_record(timestamp_iso, image_path, prediction, confidence, thumbnail_path=thumb_path)
                     
                     record_data = {
                         "id": record_id,
                         "timestamp": timestamp_iso,
                         "image_path": image_path,
+                        "thumbnail_path": thumb_path,
                         "prediction": prediction,
                         "confidence": confidence,
                         "corrected_label": None
