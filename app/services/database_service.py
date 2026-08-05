@@ -206,6 +206,22 @@ class DatabaseService:
                 logger.error(f"Database error in get_record_count: {e}")
                 return 0
 
+    def delete_records_before(self, cutoff_timestamp):
+        """删除 timestamp < cutoff 的记录，返回 [(image_path, thumbnail_path), ...] 供调用方清理文件。
+        ISO8601 字符串按字典序比较等价于时间序比较（本项目 timestamp 均为 datetime.isoformat()）。"""
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT image_path, thumbnail_path FROM records WHERE timestamp < ?", (cutoff_timestamp,))
+                rows = cursor.fetchall()
+                cursor.execute("DELETE FROM records WHERE timestamp < ?", (cutoff_timestamp,))
+                conn.commit()
+                return rows
+            except sqlite3.Error as e:
+                logger.error(f"Database error in delete_records_before: {e}")
+                return []
+
     def close(self):
         """
         Close the database connection.

@@ -14,7 +14,7 @@ import shutil
 import re
 import numpy as np
 from PIL import Image
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +304,13 @@ class SystemController(QObject):
         self.worker_thread.started.connect(self.worker.start_loop)
         self.worker.finished.connect(self.worker_thread.quit)
 
+        # 滚动归档：启动时清理一次过期数据 + 每 24h 定时清理
+        self.cleanup_timer = QTimer(self)
+        self.cleanup_timer.setInterval(24 * 60 * 60 * 1000)  # 24 小时
+        self.cleanup_timer.timeout.connect(self._scheduled_cleanup)
+        self.cleanup_timer.start()
+        self.cleanup_old_records()
+
     def _initialize_hardware(self):
         driver_type = self.config.get("camera_settings.driver_type", "mock")
         try:
@@ -415,6 +422,32 @@ class SystemController(QObject):
         self.db_service.close()
         
         logger.info("Shutdown complete.")
+
+    def cleanup_old_records(self, retention_days=None):
+        """删除超过保留期的记录及其原图/缩略图文件，防止 7×24 运行爆盘。"""
+        if retention_days is None:
+            retention_days = self.config.get("storage.retention_days", 60)
+        cutoff = (datetime.now() - timedelta(days=retention_days)).isoformat()
+        deleted = self.db_service.delete_records_before(cutoff)
+        n_files = 0
+        for image_path, thumbnail_path in deleted:
+            for p in (image_path, thumbnail_path):
+                if p:
+                    try:
+                        if os.path.exists(p):
+                            os.remove(p)
+                            n_files += 1
+                    except OSError as e:
+                        logger.warning(f"Failed to remove file {p}: {e}")
+        logger.info(f"Cleanup: removed {len(deleted)} records, {n_files} files (retention={retention_days}d, cutoff={cutoff})")
+        return len(deleted), n_files
+
+    def _scheduled_cleanup(self):
+        """定时清理包装，吞掉异常避免影响事件循环。"""
+        try:
+            self.cleanup_old_records()
+        except Exception as e:
+            logger.error(f"Scheduled cleanup failed: {e}")
 
     def set_camera_exposure(self, value):
         if self.camera and self.camera.is_connected():
