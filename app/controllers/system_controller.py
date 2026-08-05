@@ -309,7 +309,7 @@ class SystemController(QObject):
         self.cleanup_timer.setInterval(24 * 60 * 60 * 1000)  # 24 小时
         self.cleanup_timer.timeout.connect(self._scheduled_cleanup)
         self.cleanup_timer.start()
-        self.cleanup_old_records()
+        self.cleanup_old_records(delete=False)  # 启动只报告，不自动删（防误删旧样本）
 
     def _initialize_hardware(self):
         driver_type = self.config.get("camera_settings.driver_type", "mock")
@@ -423,11 +423,19 @@ class SystemController(QObject):
         
         logger.info("Shutdown complete.")
 
-    def cleanup_old_records(self, retention_days=None):
-        """删除超过保留期的记录及其原图/缩略图文件，防止 7×24 运行爆盘。"""
+    def cleanup_old_records(self, retention_days=None, delete=True):
+        """处理超过保留期的记录。
+        delete=True:  删除记录及原图/缩略图文件（24h 定时清理用）。
+        delete=False: 仅统计并记日志，不删除（启动时用，防止误删旧样本）。"""
         if retention_days is None:
             retention_days = self.config.get("storage.retention_days", 60)
         cutoff = (datetime.now() - timedelta(days=retention_days)).isoformat()
+        if not delete:
+            n = self.db_service.count_records_before(cutoff)
+            if n > 0:
+                logger.info(f"Retention check: {n} 条记录超过 {retention_days}d (cutoff={cutoff})。"
+                            f"不自动删除——由 24h 定时清理或手动触发处理。")
+            return n, 0
         deleted = self.db_service.delete_records_before(cutoff)
         n_files = 0
         for image_path, thumbnail_path in deleted:
