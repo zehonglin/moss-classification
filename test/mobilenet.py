@@ -161,6 +161,7 @@ class TrainingWorker(QThread):
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     torch.save({
+                        'architecture': 'mobilenet_v2',
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'classes': classes,
@@ -181,6 +182,7 @@ class TrainingWorker(QThread):
             # 保存最终模型
             final_model_path = os.path.join(self.config['output_dir'], 'mobilenet_final.pth')
             torch.save({
+                'architecture': 'mobilenet_v2',
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'classes': classes,

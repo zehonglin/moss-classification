@@ -34,13 +34,17 @@ class SystemWorker(QObject):
     disk_space_warning = Signal(str)  # Emitted when disk space is low
     finished = Signal()
 
-    def __init__(self, camera: BaseCamera, model_service: ModelService, db_service: DatabaseService, config: ConfigManager):
+    def __init__(self, camera: BaseCamera, model_service: ModelService, db_service: DatabaseService, config: ConfigManager, camera_lock=None):
         super().__init__()
         self.camera = camera
         self.model_service = model_service
         self.db_service = db_service
         self.config = config
         
+        # 串行化相机访问：预览（主线程）与推理（worker 线程）共用同一相机，
+        # 必须加锁，避免 SDK 并发调用导致缓冲区错乱或崩溃
+        self._camera_lock = camera_lock if camera_lock is not None else threading.Lock()
+
         # Thread-safe stop event (replaces _is_running boolean)
         # Event is thread-safe: set(), clear(), is_set() are atomic
         self._stop_event = threading.Event()
@@ -80,9 +84,10 @@ class SystemWorker(QObject):
                 if self._stop_event.is_set():
                     break
                 
-                # 1. Capture
+                # 1. Capture（加锁，与预览线程串行访问相机）
                 capture_start_time = time.time()
-                image = self.camera.get_frame()
+                with self._camera_lock:
+                    image = self.camera.get_frame()
                 capture_duration = (time.time() - capture_start_time) * 1000
                 
                 if image and not self._stop_event.is_set():
@@ -243,17 +248,10 @@ class SystemController(QObject):
         # Services
         self.db_service = DatabaseService(self.config)
         
-        # Initialize ModelService with a safe default model first
-        default_model = 'efficientnet_b0'
+        # 直接加载配置指定的本地模型，不再预先下载 EfficientNet（离线环境友好）
         models_dir = self.config.get("model_settings.models_directory", "models/")
-        self.model_service = ModelService(model_name=default_model, models_dir=models_dir)
-
-        # After successful initialization, load the user-configured model
-        desired_model = self.config.get("model_settings.current_model_name", default_model)
-        if desired_model != default_model:
-            # Use the load_model method which is designed to handle custom .pth files
-            logger.info(f"Default model loaded. Now switching to configured model: {desired_model}")
-            self.model_service.load_model(desired_model)
+        desired_model = self.config.get("model_settings.current_model_name")
+        self.model_service = ModelService(model_name=desired_model, models_dir=models_dir)
 
         
         # Hardware
@@ -265,14 +263,15 @@ class SystemController(QObject):
         self.preview_timer.timeout.connect(self._preview_frame)
         
         # Worker Thread
+        self._camera_lock = threading.Lock()  # 串行化预览与推理对相机的访问
         self.worker_thread = QThread()
-        self.worker = SystemWorker(self.camera, self.model_service, self.db_service, self.config)
+        self.worker = SystemWorker(self.camera, self.model_service, self.db_service, self.config, self._camera_lock)
         self.worker.moveToThread(self.worker_thread)
         
         # Connections
         self.worker.image_ready.connect(self.image_updated)
         self.worker.result_ready.connect(self.result_updated)
-        self.worker.error_occurred.connect(self._handle_error)
+        self.worker.error_occurred.connect(self._handle_worker_error)  # 可恢复错误：不复位整线
         self.worker.disk_space_warning.connect(self.disk_space_warning)  # Forward disk warnings
         self.worker_thread.started.connect(self.worker.start_loop)
         self.worker.finished.connect(self.worker_thread.quit)
@@ -409,7 +408,8 @@ class SystemController(QObject):
 
     def _preview_frame(self):
         try:
-            image = self.camera.get_frame()
+            with self._camera_lock:
+                image = self.camera.get_frame()
             if image:
                 self.image_updated.emit(image)
         except Exception as e:
@@ -422,9 +422,26 @@ class SystemController(QObject):
         return self.db_service.get_recent_records(limit)
 
     def _handle_error(self, message):
+        """
+        可恢复错误：仅记录并通知 UI，不触发停机。
+        单次操作失败（连接相机、设置参数、单帧预览等）不应让整条产线停摆。
+        """
         logger.error(f"System Error: {message}")
         self.error_occurred.emit(message)
-        self.shutdown() # Perform a full shutdown on error
+
+    def _handle_worker_error(self, message):
+        """
+        Worker 线程报告的错误：处理循环已由 worker 自行停止。
+        这里仅记录、通知 UI，并尽量恢复到预览态，便于操作员排查后重新开始，
+        而非整线停机或断开相机/数据库。
+        """
+        logger.error(f"Worker Error: {message}")
+        self.error_occurred.emit(message)
+        if self.camera.is_connected():
+            self.preview_timer.start()
+            self.status_updated.emit(STATUS_PREVIEWING)
+        else:
+            self.status_updated.emit(STATUS_IDLE)
 
     def get_available_models(self):
         return self.model_service.get_downloaded_models()

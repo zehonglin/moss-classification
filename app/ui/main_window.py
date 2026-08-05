@@ -518,3 +518,12 @@ class MainWindow(QMainWindow):
             self.history_list_widget.addItem(item)
             self.history_list_widget.setItemWidget(item, item_widget)
 
+    def closeEvent(self, event):
+        """窗口关闭时清理：停止 worker、断开相机、关闭数据库（WAL checkpoint）。"""
+        logger.info("Application closing, shutting down controller...")
+        try:
+            self.controller.shutdown()
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+        event.accept()
+
