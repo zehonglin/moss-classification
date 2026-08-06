@@ -1,38 +1,9 @@
 """纠错不得中断产线采集的测试。"""
 
-from PySide6.QtCore import QObject, Signal
-
 import app.ui.main_window as mw_mod
 from app.ui.main_window import MainWindow
 from app.utils.config_manager import ConfigManager
-
-
-class FakeController(QObject):
-    image_updated = Signal(object)
-    result_updated = Signal(dict)
-    status_updated = Signal(str)
-    error_occurred = Signal(str)
-    disk_space_warning = Signal(str)
-    model_loaded = Signal(bool, str)
-
-    def __init__(self):
-        super().__init__()
-        self.status = "RUNNING"
-        self.camera = type("FakeCam", (), {"is_connected": lambda self: True})()
-        self.stop_calls = 0
-        self.corrections = []
-
-    def get_recent_records(self):
-        return []
-
-    def get_available_models(self):
-        return []
-
-    def stop_system(self):
-        self.stop_calls += 1
-
-    def correct_prediction(self, record_id, label):
-        self.corrections.append((record_id, label))
+from tests.fakes import FakeController
 
 
 def _make_window(tmp_path):

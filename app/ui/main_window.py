@@ -372,6 +372,15 @@ class MainWindow(QMainWindow):
 
     def _update_result_display(self, record_data: dict):
         """Receives a new record and updates the UI incrementally."""
+        # 调试捕获（capture_single，id=None）：未入库，不进历史、不参与纠错
+        if record_data.get("id") is None:
+            pred = record_data.get("prediction", "?")
+            conf = record_data.get("confidence", 0.0)
+            conf_text = f" {conf:.1%}" if isinstance(conf, (int, float)) else ""
+            self.result_label.setText(f"调试捕获（未入库）: {pred}{conf_text}")
+            self.correction_button.setEnabled(False)
+            return
+
         self._add_history_record(record_data)  # 列表始终更新（让操作员知道在采）
         # 选中历史项时，结果栏/画面保持在该历史项（不被新记录抢），只更新列表
         if not self.selected_history_item:

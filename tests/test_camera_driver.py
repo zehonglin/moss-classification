@@ -3,35 +3,10 @@
 import sys
 
 import pytest
-from PySide6.QtCore import QObject, Signal
 
 from app.controllers.system_controller import create_camera
 from app.utils.config_manager import ConfigManager
-
-
-class FakeController(QObject):
-    """MainWindow 单测用的最小假控制器（避免真实 SystemController 的 DB/模型副作用）。"""
-
-    image_updated = Signal(object)
-    result_updated = Signal(dict)
-    status_updated = Signal(str)
-    error_occurred = Signal(str)
-    disk_space_warning = Signal(str)
-    model_loaded = Signal(bool, str)
-
-    def __init__(self):
-        super().__init__()
-        self.status = "IDLE"
-        self.camera = type("FakeCam", (), {"is_connected": lambda self: False})()
-
-    def get_recent_records(self):
-        return []
-
-    def get_available_models(self):
-        return []
-
-    def stop_system(self):
-        pass
+from tests.fakes import FakeController
 
 
 def _config_with_driver(tmp_path, driver):
