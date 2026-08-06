@@ -503,8 +503,9 @@ class MainWindow(QMainWindow):
     def _handle_error(self, message):
         logger.error(f"Received error in UI: {message}")
         self.result_label.setText(f"错误: {message}")
-        self.selected_history_item = None # Reset history view on error
-        self._update_status(STATUS_IDLE) # Reset UI to safe state on error
+        # 可恢复错误：不清空连接状态（相机仍可能连接着），按钮状态由 controller 状态驱动。
+        # 若确为未连接，controller 会单独发 status_updated(IDLE)。
+        self.selected_history_item = None  # Reset history view on error
 
     def _handle_disk_warning(self, message):
         """通用警告显示（磁盘空间/相机无图等，经 disk_space_warning 信号转发）。"""

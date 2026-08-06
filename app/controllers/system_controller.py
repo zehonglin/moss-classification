@@ -636,6 +636,8 @@ class SystemController(QObject):
         logger.error(f"Worker Error: {message}")
         self.error_occurred.emit(message)
         if self.camera.is_connected():
+            # 先切回 preview 触发模式，再启预览取流；否则硬件触发模式下预览会一直无图
+            self._apply_trigger_config("preview")
             self.preview_timer.start()
             self.status_updated.emit(STATUS_PREVIEWING)
         else:
