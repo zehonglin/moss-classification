@@ -6,6 +6,7 @@ import logging
 import gc
 from app.core.interfaces import BaseCamera
 from PySide6.QtGui import QImage
+from app.drivers.camera_selector import read_device_model, read_device_serial, select_device_index
 
 # Add MvImport to path
 sdk_path = os.path.join(os.getcwd(), "app", "drivers", "hikvision_sdk")
@@ -42,10 +43,13 @@ class HikvisionCamera(BaseCamera):
     # Maximum consecutive failures before logging a warning
     MAX_CONSECUTIVE_FAILURES = 5
     
-    def __init__(self):
+    def __init__(self, serial_number=None):
         self.handle = None
         self.b_is_connected = False
         self.n_payload_size = 0
+        self.serial_number = serial_number
+        self.device_serial = None
+        self.device_model = None
         
         # Pixel conversion buffer (ctypes) - reused across frames
         self.convert_buf = None
@@ -83,8 +87,12 @@ class HikvisionCamera(BaseCamera):
         if deviceList.nDeviceNum == 0:
             raise Exception("No Hikvision devices found!")
 
-        # 2. Select the first device
-        stDeviceList = ctypes.cast(deviceList.pDeviceInfo[0], ctypes.POINTER(MV_CC_DEVICE_INFO)).contents
+        # 2. 按序列号选择设备（为空取第一台），并记录机型/序列号供 UI 显示
+        index = select_device_index(deviceList, self.serial_number)
+        stDeviceList = ctypes.cast(deviceList.pDeviceInfo[index], ctypes.POINTER(MV_CC_DEVICE_INFO)).contents
+        self.device_serial = read_device_serial(stDeviceList) or None
+        self.device_model = read_device_model(stDeviceList) or None
+        logger.info(f"Selected camera: serial={self.device_serial} model={self.device_model}")
 
         # 3. Create Handle
         self.handle = MvCamera()

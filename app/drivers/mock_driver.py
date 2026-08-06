@@ -18,6 +18,8 @@ class MockCamera(BaseCamera):
         self._width = 640
         self._height = 480
         self._trigger_mode = "preview"
+        self.device_serial = None
+        self.device_model = "MockCamera"
         logger.info("Initialized MockCamera.")
 
     def connect(self):

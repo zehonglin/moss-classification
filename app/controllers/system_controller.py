@@ -24,7 +24,7 @@ STATUS_PREVIEWING = "PREVIEWING" # Camera connected, live view
 STATUS_RUNNING = "RUNNING" # Full processing loop
 
 
-def create_camera(driver_type: str):
+def create_camera(driver_type: str, serial_number: str = None):
     """按配置创建相机驱动实例。
 
     驱动类型必须显式配置：hikvision 加载失败直接抛 ImportError（启动失败，
@@ -32,7 +32,7 @@ def create_camera(driver_type: str):
     """
     if driver_type == "hikvision":
         from app.drivers.hikvision_driver import HikvisionCamera
-        return HikvisionCamera()
+        return HikvisionCamera(serial_number=serial_number)
     if driver_type == "mock":
         from app.drivers.mock_driver import MockCamera
         return MockCamera()
@@ -325,6 +325,7 @@ class SystemController(QObject):
     error_occurred = Signal(str)
     disk_space_warning = Signal(str)  # Forwarded from worker
     model_loaded = Signal(bool, str)  # 模型后台加载完成（成功否, 模型名）
+    camera_info = Signal(str)  # 相机连接信息（序列号/型号），供 UI 显示
 
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
@@ -375,9 +376,10 @@ class SystemController(QObject):
 
     def _initialize_hardware(self):
         driver_type = self.config.get("camera_settings.driver_type", "hikvision")
+        serial_number = self.config.get("camera_settings.camera_serial", "")
         logger.info(f"Initializing camera driver: {driver_type}")
         # 失败时直接抛错（启动失败），绝不静默回退模拟相机
-        self.camera = create_camera(driver_type)
+        self.camera = create_camera(driver_type, serial_number=serial_number)
 
     def _apply_trigger_config(self, mode):
         """按模式应用相机触发配置（source/activation/debouncer 从 config 读）。"""
@@ -444,6 +446,11 @@ class SystemController(QObject):
             self._apply_trigger_config("preview")
             self.preview_timer.start()
             self.status_updated.emit(STATUS_PREVIEWING)
+            if getattr(self.camera, "device_serial", None):
+                self.camera_info.emit(
+                    f"相机已连接 (SN: {self.camera.device_serial}, "
+                    f"Model: {self.camera.device_model or '?'})"
+                )
             logger.info("Camera connected, preview started.")
         except Exception as e:
             self._handle_error(f"Failed to connect camera: {e}")

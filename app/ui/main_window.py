@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         self.controller.error_occurred.connect(self._handle_error)
         self.controller.disk_space_warning.connect(self._handle_disk_warning)
         self.controller.model_loaded.connect(self._on_model_loaded)
+        self.controller.camera_info.connect(self._show_camera_info)
 
         self._init_ui()
         self._load_history()
@@ -512,6 +513,11 @@ class MainWindow(QMainWindow):
         logger.warning(f"Warning: {message}")
         self.result_label.setText(f"⚠️ {message}")
         self.result_label.setStyleSheet("color: #FFA726;")  # 橙色警告
+
+    def _show_camera_info(self, message):
+        """相机连接信息（序列号/型号）。"""
+        logger.info(f"Camera info: {message}")
+        self.result_label.setText(message)
 
     def _show_correction_dialog(self):
         """纠错。优先针对当前查看的历史项（selected），无选中则用最近一条（last）。

@@ -34,6 +34,7 @@ class ConfigManager:
         self.default_config = {
             "camera_settings": {
                 "driver_type": "hikvision",
+                "camera_serial": "",
                 "resolution_width": 2048,
                 "resolution_height": 2048,
                 "exposure": 10000,
