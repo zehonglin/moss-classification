@@ -159,25 +159,26 @@ class ConfigManager:
         return value
 
     def set(self, key_path, value):
-        """
-        Set a config value. The save is debounced to reduce disk I/O.
-        Multiple rapid calls will result in a single file write.
-        """
+        """Set a config value. 改 config_data 持 _lock（与 _save_now 读互斥，防并发写出半截 JSON）；
+        save_config 在锁外调（_schedule_save 自己持锁，避免重入死锁）。"""
         keys = key_path.split('.')
-        current = self.config_data
-        for i, key in enumerate(keys):
-            if i == len(keys) - 1:
-                # Only mark dirty if value actually changed
-                if current.get(key) != value:
-                    current[key] = value
-                    self.save_config()  # This now debounces
-            else:
-                if not isinstance(current, dict):
-                    logger.error(f"Cannot set {key_path}: intermediate key '{key}' is not a dictionary.")
-                    return
-                if key not in current:
-                    current[key] = {}
-                current = current[key]
+        changed = False
+        with self._lock:
+            current = self.config_data
+            for i, key in enumerate(keys):
+                if i == len(keys) - 1:
+                    if current.get(key) != value:
+                        current[key] = value
+                        changed = True
+                else:
+                    if not isinstance(current, dict):
+                        logger.error(f"Cannot set {key_path}: intermediate key '{key}' is not a dictionary.")
+                        return
+                    if key not in current:
+                        current[key] = {}
+                    current = current[key]
+        if changed:
+            self.save_config()
 
     def set_many(self, updates: dict):
         """
@@ -188,19 +189,19 @@ class ConfigManager:
             updates: Dict of {key_path: value} pairs
         """
         changed = False
-        for key_path, value in updates.items():
-            keys = key_path.split('.')
-            current = self.config_data
-            for i, key in enumerate(keys):
-                if i == len(keys) - 1:
-                    if current.get(key) != value:
-                        current[key] = value
-                        changed = True
-                else:
-                    if key not in current:
-                        current[key] = {}
-                    current = current[key]
-        
+        with self._lock:
+            for key_path, value in updates.items():
+                keys = key_path.split('.')
+                current = self.config_data
+                for i, key in enumerate(keys):
+                    if i == len(keys) - 1:
+                        if current.get(key) != value:
+                            current[key] = value
+                            changed = True
+                    else:
+                        if key not in current:
+                            current[key] = {}
+                        current = current[key]
         if changed:
             self.save_config()
 

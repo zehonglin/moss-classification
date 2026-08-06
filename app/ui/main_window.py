@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         self.controller.status_updated.connect(self._update_status)
         self.controller.error_occurred.connect(self._handle_error)
         self.controller.disk_space_warning.connect(self._handle_disk_warning)
+        self.controller.model_loaded.connect(self._on_model_loaded)
 
         self._init_ui()
         self._load_history()
@@ -306,10 +307,18 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, lambda: self._perform_model_switch(text))
 
     def _perform_model_switch(self, model_name):
+        # 后台加载（controller.reload_model 异步），完成后回调 _on_model_loaded 恢复控件
         self.controller.reload_model(model_name)
-        # Re-enable controls and let the state machine handle button states
+
+    def _on_model_loaded(self, ok, model_name):
+        """模型后台加载完成，恢复控件。"""
         self.model_combo.setEnabled(True)
-        self._update_status(self.controller.status_updated.emit(STATUS_PREVIEWING)) # Refresh UI state
+        self.toggle_camera_button.setEnabled(True)
+        self.start_button.setEnabled(self.controller.camera.is_connected())
+        if ok:
+            self._update_status(self.status)
+        else:
+            self.result_label.setText(f"模型加载失败: {model_name}")
 
     def _on_threshold_changed(self, value):
         """置信度阈值变更：低于此值的结果标记为"需复检"。"""
@@ -480,11 +489,10 @@ class MainWindow(QMainWindow):
         self._update_status(STATUS_IDLE) # Reset UI to safe state on error
 
     def _handle_disk_warning(self, message):
-        """Handle disk space warning from the controller."""
-        logger.warning(f"Disk space warning: {message}")
-        # Show warning in the result panel with yellow/orange styling
-        self.result_label.setText(f"⚠️ 磁盘警告: {message}")
-        self.result_label.setStyleSheet("color: #FFA726;")  # Orange color for warning
+        """通用警告显示（磁盘空间/相机无图等，经 disk_space_warning 信号转发）。"""
+        logger.warning(f"Warning: {message}")
+        self.result_label.setText(f"⚠️ {message}")
+        self.result_label.setStyleSheet("color: #FFA726;")  # 橙色警告
 
     def _show_correction_dialog(self):
         logger.info("Correction dialog initiated.")

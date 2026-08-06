@@ -4,6 +4,7 @@ import os
 # Add the project root to the python path
 root_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(root_dir)
+os.chdir(root_dir)  # 切到项目根，使 config/models/data/logs 相对路径不依赖启动目录
 
 # Set model cache directory to local 'models' folder
 # This must be done BEFORE importing torch/timm

@@ -92,6 +92,8 @@ class SystemWorker(QObject):
 
         consecutive_errors = 0
         MAX_CONSECUTIVE_ERRORS = 10
+        consecutive_none = 0
+        MAX_CONSECUTIVE_NONE = 15  # 连续 None 阈值（~grab_timeout×15，默认约 30s 无图判相机异常）
         
         while not self._stop_event.is_set():
             try:
@@ -111,6 +113,18 @@ class SystemWorker(QObject):
                 with self._camera_lock:
                     image = self.camera.get_frame(timeout_ms=grab_timeout)
                 capture_duration = (time.time() - capture_start_time) * 1000
+
+                # 取图为 None（超时/无触发/相机问题）：连续 None 计数，超阈值只告警不停。
+                # is_connected() 仅逻辑标志不反映物理掉线（USB 拔了仍 True），无法区分原因；
+                # 由操作员看告警检查现场，托盘/相机恢复后 worker 自动继续处理。
+                if not image and not self._stop_event.is_set():
+                    consecutive_none += 1
+                    if consecutive_none >= MAX_CONSECUTIVE_NONE:
+                        self.disk_space_warning.emit(
+                            f"相机连续 {MAX_CONSECUTIVE_NONE * grab_timeout / 1000:.0f}s 无图像，请检查相机/光电/产线")
+                        consecutive_none = 0  # 重置避免刷屏；继续等触发
+                elif image:
+                    consecutive_none = 0
                 
                 if image and not self._stop_event.is_set():
                     self.image_ready.emit(image)
@@ -263,6 +277,20 @@ class SystemWorker(QObject):
         return not self._stop_event.is_set()
 
 
+class ModelLoadWorker(QThread):
+    """后台加载模型，避免阻塞 UI（切大模型时界面不冻结）。"""
+    finished_load = Signal(bool, str)  # success, model_name
+
+    def __init__(self, model_service, model_name):
+        super().__init__()
+        self.model_service = model_service
+        self.model_name = model_name
+
+    def run(self):
+        ok = self.model_service.load_model(self.model_name)
+        self.finished_load.emit(ok, self.model_name)
+
+
 class SystemController(QObject):
     """Main controller for the application."""
     image_updated = Signal(QImage)
@@ -270,6 +298,7 @@ class SystemController(QObject):
     status_updated = Signal(str)
     error_occurred = Signal(str)
     disk_space_warning = Signal(str)  # Forwarded from worker
+    model_loaded = Signal(bool, str)  # 模型后台加载完成（成功否, 模型名）
 
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
@@ -428,19 +457,23 @@ class SystemController(QObject):
             self._handle_error(f"Failed to start system: {e}")
 
     def stop_system(self):
-        """停止采集，恢复预览模式。"""
+        """停止采集，恢复预览模式。worker 未及时停止则不碰相机（避免与仍在跑的 worker 竞态改触发参数）。"""
         logger.info("Stopping processing...")
+        worker_stopped = True
         if self.worker_thread.isRunning():
             self.worker.stop_loop()
             if not self.worker_thread.wait(5000):
-                logger.warning("Worker thread did not stop within 5 seconds.")
-        if self.camera.is_connected():
-            self._apply_trigger_config("preview")  # 切回连续模式
+                logger.warning("Worker 未在 5s 内停止，跳过相机配置恢复以避免竞态。建议手动断开重连。")
+                worker_stopped = False
+        # 仅当 worker 确实停止后才操作相机（避免与仍在跑的 worker 竞态改触发参数）
+        if worker_stopped and self.camera.is_connected():
+            self._apply_trigger_config("preview")
             self.preview_timer.start()
             self.status_updated.emit(STATUS_PREVIEWING)
             logger.info("Stopped, returned to preview.")
-        else:
+        elif not self.camera.is_connected():
             self.status_updated.emit(STATUS_IDLE)
+        # worker 超时未停：保持当前状态，不碰相机，等 worker 自行结束或人工介入
 
     def shutdown(self):
         """Cleanly shuts down all components."""
@@ -509,7 +542,7 @@ class SystemController(QObject):
     def _preview_frame(self):
         try:
             with self._camera_lock:
-                image = self.camera.get_frame()
+                image = self.camera.get_frame(timeout_ms=100)  # 短 timeout，相机异常时 UI 最多卡 100ms
             if image:
                 self.image_updated.emit(image)
         except Exception as e:
@@ -587,12 +620,17 @@ class SystemController(QObject):
         return self.model_service.get_downloaded_models()
 
     def reload_model(self, model_name):
-        logger.info(f"Attempting to switch model to {model_name}...")
-        if self.model_service.load_model(model_name):
+        """后台加载模型（不阻塞 UI）。完成通过 model_loaded 信号通知。"""
+        logger.info(f"后台加载模型 {model_name}...")
+        self._model_loader = ModelLoadWorker(self.model_service, model_name)
+        self._model_loader.finished_load.connect(self._on_model_loaded)
+        self._model_loader.start()
+
+    def _on_model_loaded(self, ok, model_name):
+        if ok:
             self.config.set("model_settings.current_model_name", model_name)
-            logger.info(f"Successfully switched model to {model_name}")
-            return True
+            logger.info(f"模型切换成功: {model_name}")
         else:
-            self.error_occurred.emit(f"Failed to load model {model_name}")
-            logger.error(f"Failed to load model {model_name}")
-            return False
+            self.error_occurred.emit(f"加载模型失败: {model_name}")
+            logger.error(f"加载模型失败: {model_name}")
+        self.model_loaded.emit(ok, model_name)
