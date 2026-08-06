@@ -46,18 +46,21 @@ def prepare_data(src_root, dst_root, val_ratio=0.2, seed=42):
     return stats
 
 
-def train(img_size, batch_size, epochs, lr, data_root, output_path, num_workers=2):
+def train(arch, img_size, batch_size, epochs, lr, data_root, output_path, num_workers=2):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"设备: {device} | img_size: {img_size}")
+    print(f"架构: {arch} | 设备: {device} | img_size: {img_size}")
 
     train_t = transforms.Compose([
         transforms.Resize((img_size, img_size)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(20),
-        transforms.ColorJitter(0.1, 0.1, 0.1, 0.1),
+        transforms.RandomResizedCrop(img_size, scale=(0.7, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(25),
+        transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.08),
+        transforms.RandomGrayscale(p=0.05),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
+
     val_t = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
@@ -73,12 +76,18 @@ def train(img_size, batch_size, epochs, lr, data_root, output_path, num_workers=
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    model = models.mobilenet_v2(weights='DEFAULT')  # ImageNet 预训练
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(classes))
+    if arch == 'mobilenet_v2':
+        # torchvision MobileNetV2（与 model_service 的 torchvision 分支对齐）
+        model = models.mobilenet_v2(weights='DEFAULT')
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(classes))
+    else:
+        # 任意 timm 架构：efficientnet_b0 / resnet50 / convnext_tiny / vit_base_patch16_224 ...
+        import timm
+        model = timm.create_model(arch, pretrained=True, num_classes=len(classes))
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
 
     best_val_loss = float('inf')
@@ -122,7 +131,7 @@ def train(img_size, batch_size, epochs, lr, data_root, output_path, num_workers=
             best_val_loss = vl
             no_improve = 0
             torch.save({
-                'architecture': 'mobilenet_v2',
+                'architecture': arch,
                 'model_state_dict': model.state_dict(),
                 'classes': classes,
                 'img_size': img_size,
@@ -144,7 +153,9 @@ if __name__ == '__main__':
     p.add_argument('--img-size', type=int, default=224)
     p.add_argument('--batch-size', type=int, default=32)
     p.add_argument('--epochs', type=int, default=30)
-    p.add_argument('--lr', type=float, default=5e-4)
+    p.add_argument('--lr', type=float, default=2e-4)
+    p.add_argument('--arch', default='mobilenet_v2',
+                   help="模型架构：mobilenet_v2(torchvision) 或任意 timm 名（efficientnet_b0/resnet50/convnext_tiny/vit_base_patch16_224...）")
     p.add_argument('--val-ratio', type=float, default=0.2)
     p.add_argument('--prepare-only', action='store_true', help='只划分数据不训练')
     args = p.parse_args()
@@ -153,4 +164,4 @@ if __name__ == '__main__':
     print("数据划分:", stats)
     if args.prepare_only:
         sys.exit(0)
-    train(args.img_size, args.batch_size, args.epochs, args.lr, args.data_root, args.output)
+    train(args.arch, args.img_size, args.batch_size, args.epochs, args.lr, args.data_root, args.output)

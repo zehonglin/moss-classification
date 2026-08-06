@@ -13,23 +13,6 @@ import json
 import torch
 
 
-KNOWN_ARCHS = [
-    'mobilenetv3_large_100', 'mobilenetv3_small_100',
-    'mobilenetv2_100', 'mobilenet_v2', 'mobilenetv3', 'mobilenet',
-    'efficientnet_b0', 'efficientnet_b1', 'efficientnet_b2',
-    'resnet18', 'resnet34', 'resnet50',
-    'vit_base_patch16_224',
-]
-
-
-def guess_arch(filename):
-    name = os.path.basename(filename).lower()
-    for a in KNOWN_ARCHS:
-        if name.startswith(a):
-            return a
-    return None
-
-
 def is_torchvision_sd(sd):
     return any(k.startswith('features.') for k in sd.keys())
 
@@ -67,10 +50,7 @@ def export(pth_path, onnx_path=None, opset=17):
         arch, classes, img_size = None, None, 224
 
     if not arch:
-        arch = guess_arch(pth_path)
-        if not arch:
-            raise ValueError("无法确定架构：checkpoint 无 architecture 字段且文件名无法识别。")
-        print(f"[警告] checkpoint 未声明 architecture，按文件名推断为 '{arch}'")
+        raise ValueError("无法确定架构：checkpoint 无 architecture 字段。请用 converter/train_moss.py 重训（会自动存 architecture）。")
 
     num_classes = detect_num_classes(state_dict)
     model = build_model(arch, num_classes, state_dict)

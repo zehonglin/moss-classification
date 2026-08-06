@@ -54,8 +54,8 @@ class ConfigManager:
             },
             "storage": {
                 "image_format": "png",
+                "image_quality": 95,
                 "thumbnail_max_size": 300,
-                "thumbnail_quality": 85,
                 "retention_days": 60
             }
         }

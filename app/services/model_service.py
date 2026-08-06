@@ -108,18 +108,6 @@ class ModelService:
 
     # ---------------- 架构解析（.pth 路径）----------------
     @staticmethod
-    def _guess_arch_from_filename(filename: str):
-        name = filename.lower()
-        known = ['mobilenetv3_large_100', 'mobilenetv3_small_100',
-                 'mobilenetv2_100', 'mobilenet_v2', 'mobilenetv3', 'mobilenet',
-                 'efficientnet_b0', 'efficientnet_b1', 'efficientnet_b2',
-                 'resnet18', 'resnet34', 'resnet50', 'vit_base_patch16_224']
-        for arch in known:
-            if name.startswith(arch):
-                return arch
-        return None
-
-    @staticmethod
     def _is_torchvision_state_dict(state_dict: dict) -> bool:
         return any(k.startswith('features.') for k in state_dict.keys())
 
@@ -214,10 +202,9 @@ class ModelService:
             if isinstance(checkpoint, dict):
                 arch = checkpoint.get('architecture') or checkpoint.get('arch')
             if not arch:
-                arch = self._guess_arch_from_filename(model_name)
-                if not arch:
-                    raise ValueError("无法确定模型架构：checkpoint 未声明 architecture 且文件名无法识别。")
-                logger.warning(f"Checkpoint 未声明 architecture，按文件名推断为 '{arch}'。")
+                raise ValueError(
+                    "无法确定模型架构：checkpoint 未声明 architecture 字段。"
+                    "请用 converter/train_moss.py 重训（会自动存 architecture）。")
             logger.info(f"Using architecture '{arch}'.")
 
             new_model, is_torchvision = self._build_model_from_arch(arch, num_classes, state_dict)
