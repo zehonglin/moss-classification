@@ -28,8 +28,11 @@ def _qimage_to_pil(q_image):
     """QImage → PIL.Image(RGB)。直接读取像素缓冲，不依赖 Qt imageformats 插件
     （本机 PySide6 缺 JPEG 插件，QImage.save / QImageReader 对 JPEG 均不可用）。"""
     q = q_image.convertToFormat(QImage.Format.Format_RGB888)
-    ptr = q.bits()
-    arr = np.array(ptr).reshape(q.height(), q.width(), 3)
+    w, h = q.width(), q.height()
+    bpl = q.bytesPerLine()
+    buf = np.array(q.bits(), dtype=np.uint8, copy=True)
+    # 按 bytesPerLine 切片去除行尾对齐 padding，避免宽度非 4 倍数时 reshape 错位
+    arr = buf[: h * bpl].reshape(h, bpl)[:, : w * 3].reshape(h, w, 3)
     return Image.fromarray(arr, "RGB")
 
 
