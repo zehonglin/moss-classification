@@ -379,16 +379,17 @@ class SystemWorker(QObject):
 
 class ModelLoadWorker(QThread):
     """后台加载模型，避免阻塞 UI（切大模型时界面不冻结）。"""
-    finished_load = Signal(bool, str)  # success, model_name
+    finished_load = Signal(bool, str, int)  # success, model_name, seq（用于丢弃过期结果）
 
-    def __init__(self, model_service, model_name):
+    def __init__(self, model_service, model_name, seq):
         super().__init__()
         self.model_service = model_service
         self.model_name = model_name
+        self.seq = seq
 
     def run(self):
         ok = self.model_service.load_model(self.model_name)
-        self.finished_load.emit(ok, self.model_name)
+        self.finished_load.emit(ok, self.model_name, self.seq)
 
 
 class SystemController(QObject):
@@ -421,6 +422,8 @@ class SystemController(QObject):
         
         # Hardware
         self._initialize_hardware()
+        self._model_switch_seq = 0
+        self._model_loaders = []
         
         # Preview Timer
         self.preview_timer = QTimer(self)
@@ -611,6 +614,10 @@ class SystemController(QObject):
                     "Worker 未能在超时内停止，跳过相机断开与 DB 关闭（由进程退出兜底）。"
                 )
                 return
+        # 等待模型加载线程结束（避免退出时 QThread 仍运行导致崩溃）
+        for loader in self._model_loaders:
+            if loader.isRunning():
+                loader.wait(5000)
         self.disconnect_camera()
         # Close database connection to properly checkpoint WAL
         self.db_service.close()
@@ -838,13 +845,26 @@ class SystemController(QObject):
         return self.model_service.get_downloaded_models()
 
     def reload_model(self, model_name):
-        """后台加载模型（不阻塞 UI）。完成通过 model_loaded 信号通知。"""
-        logger.info(f"后台加载模型 {model_name}...")
-        self._model_loader = ModelLoadWorker(self.model_service, model_name)
-        self._model_loader.finished_load.connect(self._on_model_loaded)
-        self._model_loader.start()
+        """后台加载模型（不阻塞 UI）。完成通过 model_loaded 信号通知。
 
-    def _on_model_loaded(self, ok, model_name):
+        带递增 seq：只有最后一次请求的加载结果会被采纳，过期结果直接丢弃。
+        """
+        self._model_switch_seq += 1
+        seq = self._model_switch_seq
+        logger.info(f"后台加载模型 {model_name} (seq={seq})...")
+        # 保留运行中线程的引用，避免 QThread 运行中被 GC 销毁导致崩溃
+        self._model_loaders = [w for w in self._model_loaders if w.isRunning()]
+        worker = ModelLoadWorker(self.model_service, model_name, seq)
+        self._model_loaders.append(worker)
+        worker.finished_load.connect(self._on_model_loaded)
+        worker.start()
+
+    def _on_model_loaded(self, ok, model_name, seq):
+        if seq != self._model_switch_seq:
+            logger.info(
+                f"忽略过期模型加载结果: {model_name} (seq={seq}, current={self._model_switch_seq})"
+            )
+            return
         if ok:
             self.config.set("model_settings.current_model_name", model_name)
             logger.info(f"模型切换成功: {model_name}")
