@@ -67,3 +67,27 @@ def select_device_index(device_list, serial_number: str) -> int:
         if read_device_serial(info) == serial_number:
             return i
     raise RuntimeError(f"未找到序列号为 {serial_number} 的相机（共枚举 {n} 台）")
+
+
+# 可视为物理掉线的 SDK 错误码：设备无响应/句柄失效/调用顺序错/设备忙(网络断开)/USB 读错误
+FATAL_FRAME_ERROR_CODES = {
+    0x80000000,  # MV_E_HANDLE
+    0x80000003,  # MV_E_CALLORDER
+    0x80000008,  # MV_E_PRECONDITION（运行环境已变化）
+    0x8000001A,  # MV_E_NORESPONSE（设备无响应）
+    0x80000204,  # MV_E_BUSY（设备忙，或网络断开）
+    0x80000300,  # MV_E_USB_READ（读 USB 出错）
+}
+
+
+def is_fatal_frame_error(ret: int, trigger_mode: str) -> bool:
+    """判断取帧错误是否代表物理掉线。
+
+    触发模式下"超时无图"是正常现象（等待光电触发），不计入掉线；
+    连续出图（preview）模式下任何取帧失败都值得警惕。
+    """
+    if ret == 0:
+        return False
+    if trigger_mode in ("hardware", "software_single", "software_continuous"):
+        return ret in FATAL_FRAME_ERROR_CODES
+    return True

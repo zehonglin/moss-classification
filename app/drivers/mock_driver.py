@@ -37,6 +37,11 @@ class MockCamera(BaseCamera):
         gc.collect()
         logger.info("[MockCamera] Disconnected.")
 
+    def reconnect(self):
+        """断线重连（Mock：未连接时重新连接）。"""
+        if not self._is_connected:
+            self.connect()
+
     def get_frame(self, timeout_ms: int | None = None) -> QImage | None:
         if not self._is_connected:
             logger.error("[MockCamera] get_frame called but not connected.")

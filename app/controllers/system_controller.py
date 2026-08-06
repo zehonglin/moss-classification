@@ -374,6 +374,13 @@ class SystemController(QObject):
         self.cleanup_timer.start()
         self.cleanup_old_records(delete=False)  # 启动只报告，不自动删（防误删旧样本）
 
+        # 相机断线自动重连（每 10s 检查一次；成功恢复触发配置与预览）
+        self._reconnect_attempts = 0
+        self.reconnect_timer = QTimer(self)
+        self.reconnect_timer.setInterval(10 * 1000)
+        self.reconnect_timer.timeout.connect(self._try_reconnect)
+        self.reconnect_timer.start()
+
     def _initialize_hardware(self):
         driver_type = self.config.get("camera_settings.driver_type", "hikvision")
         serial_number = self.config.get("camera_settings.camera_serial", "")
@@ -446,6 +453,7 @@ class SystemController(QObject):
             self._apply_trigger_config("preview")
             self.preview_timer.start()
             self.status_updated.emit(STATUS_PREVIEWING)
+            self._reconnect_attempts = 0
             if getattr(self.camera, "device_serial", None):
                 self.camera_info.emit(
                     f"相机已连接 (SN: {self.camera.device_serial}, "
@@ -631,6 +639,43 @@ class SystemController(QObject):
                 self.image_updated.emit(image)
         except Exception as e:
             self._handle_error(f"Preview Error: {e}")
+
+    def _try_reconnect(self):
+        """相机未连接时尝试自动重连（定时调用）。"""
+        if self.camera.is_connected():
+            self._reconnect_attempts = 0
+            return
+        if not hasattr(self.camera, "reconnect"):
+            return
+        try:
+            logger.info(f"尝试重连相机 (第 {self._reconnect_attempts + 1} 次)...")
+            self.camera.reconnect()
+            self._reconnect_attempts = 0
+            self.set_camera_exposure(self.config.get("camera_settings.exposure"))
+            width = self.config.get("camera_settings.resolution_width", 2048)
+            height = self.config.get("camera_settings.resolution_height", 2048)
+            self.set_camera_resolution(width, height)
+            mode = self.config.get("camera_settings.trigger.mode", "preview")
+            if self.worker_thread.isRunning():
+                # 采集运行中：恢复配置的触发模式，worker 继续取图
+                self._apply_trigger_config(mode)
+            else:
+                self._apply_trigger_config("preview")
+                self.preview_timer.start()
+                self.status_updated.emit(STATUS_PREVIEWING)
+            if getattr(self.camera, "device_serial", None):
+                self.camera_info.emit(
+                    f"相机已重连 (SN: {self.camera.device_serial}, "
+                    f"Model: {self.camera.device_model or '?'})"
+                )
+            logger.info("相机重连成功。")
+        except Exception as e:
+            self._reconnect_attempts += 1
+            logger.warning(f"相机重连失败 (attempt {self._reconnect_attempts}): {e}")
+            if self._reconnect_attempts % 6 == 1:
+                self.disk_space_warning.emit(
+                    f"相机重连失败，请检查相机连接（已尝试 {self._reconnect_attempts} 次）"
+                )
 
     def correct_prediction(self, record_id, corrected_label):
         self.db_service.update_correction(record_id, corrected_label)

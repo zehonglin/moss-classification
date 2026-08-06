@@ -7,6 +7,7 @@ import gc
 from app.core.interfaces import BaseCamera
 from PySide6.QtGui import QImage
 from app.drivers.camera_selector import read_device_model, read_device_serial, select_device_index
+from app.drivers.camera_selector import is_fatal_frame_error
 
 # Add MvImport to path
 sdk_path = os.path.join(os.getcwd(), "app", "drivers", "hikvision_sdk")
@@ -42,11 +43,15 @@ class HikvisionCamera(BaseCamera):
     
     # Maximum consecutive failures before logging a warning
     MAX_CONSECUTIVE_FAILURES = 5
+
+    # 连续致命错误达到该值判定为物理掉线（触发模式超时不计入）
+    MAX_CONSECUTIVE_FATAL_FAILURES = 10
     
     def __init__(self, serial_number=None):
         self.handle = None
         self.b_is_connected = False
         self.n_payload_size = 0
+        self._trigger_mode = "preview"
         self.serial_number = serial_number
         self.device_serial = None
         self.device_model = None
@@ -71,6 +76,8 @@ class HikvisionCamera(BaseCamera):
         
         # Track consecutive failures for diagnostics
         self._consecutive_failures = 0
+        # 连续致命错误计数（用于判定物理掉线，与日志计数分开）
+        self._fatal_failure_count = 0
 
     def connect(self):
         if MvCamera is None:
@@ -120,31 +127,41 @@ class HikvisionCamera(BaseCamera):
 
         self.b_is_connected = True
         self._frame_count = 0
+        self._fatal_failure_count = 0
         # 默认连续模式（预览）+ 手动曝光（触发抓拍要求固定曝光）
         self.handle.MV_CC_SetEnumValueByString("TriggerMode", "Off")
         self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Off")
         logger.info("Hikvision Camera Connected (TriggerMode=Off, ExposureAuto=Off).")
 
     def disconnect(self):
-        if not self.b_is_connected or self.handle is None:
+        if self.handle is None:
             return
 
-        # Stop Grabbing
-        self.handle.MV_CC_StopGrabbing()
-        
-        # Close Device
-        self.handle.MV_CC_CloseDevice()
-        
-        # Destroy Handle
-        self.handle.MV_CC_DestroyHandle()
-        
-        self.b_is_connected = False
-        self.handle = None
-        
-        # Explicitly release all buffers to prevent memory leaks
-        self._cleanup_buffers()
-        
+        try:
+            if self.b_is_connected:
+                # Stop Grabbing
+                self.handle.MV_CC_StopGrabbing()
+            # Close Device
+            self.handle.MV_CC_CloseDevice()
+            # Destroy Handle
+            self.handle.MV_CC_DestroyHandle()
+        except Exception as e:
+            logger.warning(f"Disconnect cleanup error: {e}")
+        finally:
+            self.b_is_connected = False
+            self.handle = None
+            # Explicitly release all buffers to prevent memory leaks
+            self._cleanup_buffers()
         logger.info("Hikvision Camera Disconnected.")
+
+    def reconnect(self):
+        """断线重连：清理旧句柄后重新连接。"""
+        if self.handle is not None:
+            try:
+                self.disconnect()
+            except Exception as e:
+                logger.warning(f"Reconnect cleanup failed: {e}")
+        self.connect()
 
     def _cleanup_buffers(self):
         """Explicitly release all allocated buffers and trigger GC."""
@@ -180,6 +197,7 @@ class HikvisionCamera(BaseCamera):
         """配置触发模式：preview / hardware / software_single / software_continuous。"""
         if not self.b_is_connected:
             return
+        self._trigger_mode = mode
         if mode == "preview":
             self.handle.MV_CC_SetEnumValueByString("TriggerMode", "Off")
             logger.info("Trigger: preview (TriggerMode=Off 连续出图)")
@@ -295,6 +313,7 @@ class HikvisionCamera(BaseCamera):
         if ret == 0:
             # Success - reset failure counter
             self._consecutive_failures = 0
+            self._fatal_failure_count = 0
             
             width = stOutFrame.stFrameInfo.nWidth
             height = stOutFrame.stFrameInfo.nHeight
@@ -350,7 +369,18 @@ class HikvisionCamera(BaseCamera):
 
         else:
             # Frame capture failed
-            self._consecutive_failures += 1
+            if is_fatal_frame_error(ret, self._trigger_mode):
+                self._fatal_failure_count += 1
+                if self._fatal_failure_count >= self.MAX_CONSECUTIVE_FATAL_FAILURES:
+                    self.b_is_connected = False
+                    logger.error(
+                        f"相机疑似掉线（连续 {self._fatal_failure_count} 次致命错误 "
+                        f"ret=0x{ret:x}），标记为未连接，等待自动重连。"
+                    )
+                    self._fatal_failure_count = 0
+            else:
+                # 超时/无图：触发模式下正常，重置计数避免误判掉线
+                self._fatal_failure_count = 0
             
             # Log with different severity based on failure count
             if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
