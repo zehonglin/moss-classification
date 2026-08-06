@@ -56,7 +56,7 @@ def export(pth_path, onnx_path=None, opset=17):
     if onnx_path is None:
         onnx_path = os.path.splitext(pth_path)[0] + '.onnx'
 
-    checkpoint = torch.load(pth_path, map_location='cpu')
+    checkpoint = torch.load(pth_path, map_location='cpu', weights_only=False)
     if isinstance(checkpoint, dict):
         state_dict = checkpoint.get('model_state_dict') or checkpoint.get('state_dict') or checkpoint
         arch = checkpoint.get('architecture') or checkpoint.get('arch')

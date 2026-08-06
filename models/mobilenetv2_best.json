@@ -1,11 +1,11 @@
 {
-  "architecture": "mobilenet",
+  "architecture": "mobilenet_v2",
   "classes": [
     "A",
     "B",
     "C",
     "D"
   ],
-  "img_size": 99,
+  "img_size": 224,
   "num_classes": 4
 }

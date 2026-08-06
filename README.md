@@ -1,146 +1,116 @@
-# 苔藓识别系统 (Moss Recognition System)
+# 苔藓识别系统（Moss Recognition System）
 
-## 项目简介
+基于深度学习的工业级苔藓品级识别桌面应用。工业相机采集托盘图像，MobileNetV2 分类苔藓覆盖度品级（A/B/C/D），支持光电传感器硬件触发、ONNX 产线部署、滚动归档、置信度拒识与纠错闭环。
 
-这是一个基于深度学习的工业级苔藓识别桌面应用程序。该系统旨在通过工业相机实时采集苔藓图像，利用先进的计算机视觉模型（EfficientNet）进行分类识别，并结合传送带控制实现自动化检测流程。
+## 业务
 
-本项目经过重构，采用了模块化的 MVC 架构，支持硬件抽象（可切换模拟/真实硬件）、SQLite 数据存储以及现代化的 PySide6 用户界面。
+- **品级**：A / B / C / D，依据健康苔藓覆盖度（A 铺满 → D 几乎无覆盖）
+- **输入**：工业相机拍摄的托盘图（~2048×2048，流水线 ~3s/托盘）
+- **输出**：整图一个品级 + 置信度
 
-## 主要功能
+## 产线工作流
 
-*   **实时识别**: 集成 PyTorch + timm，支持 EfficientNet 等主流模型，实现毫秒级推理。
-*   **硬件控制**:
-    *   **相机**: 支持工业相机图像采集（目前提供 Mock 模拟驱动，可扩展海康/巴斯勒 SDK）。
-    *   **传送带**: 支持 PLC/传送带启停与速度控制。
-*   **数据记录**: 自动将识别结果、置信度及图像路径存入 SQLite 数据库。
-*   **人工纠错**: 提供界面允许操作员对识别结果进行修正，并更新数据库，为后续模型迭代积累数据。
-*   **历史回溯**: 实时显示最近的检测记录与缩略图。
+```
+流水线连续运转（软件不管）
+   └─ 托盘到位 → 光电传感器(PNP) → 相机 Line0 上升沿触发抓拍
+                                     ↓
+              worker 取图 → MobileNetV2 推理 → 存原图(PNG)+缩略图+DB → 界面显示
+```
 
-## 系统架构
+## 架构
 
-项目采用分层架构设计：
+- **UI 层** `app/ui`：PySide6 主界面（实时画面、结果、历史、侧边控制）
+- **控制层** `app/controllers/system_controller.py`：SystemController 状态机 + SystemWorker（后台取图/推理/存储）
+- **服务层** `app/services`：ModelService（.onnx/.pth 双后端）、DatabaseService（SQLite + 滚动归档）
+- **核心层** `app/core/interfaces.py`：BaseCamera 抽象（含硬件/软件触发接口）
+- **驱动层** `app/drivers`：HikvisionCamera（海康，硬件/软件触发）、MockCamera（开发）、hikvision_sdk/（厂商封装）
 
-*   **UI 层 (`app/ui`)**: 基于 PySide6 的图形界面，负责展示与交互。
-*   **控制层 (`app/controllers`)**: `SystemController` 负责协调硬件、AI 服务与 UI，管理系统状态。
-*   **服务层 (`app/services`)**:
-    *   `ModelService`: 封装 AI 模型加载与推理逻辑。
-    *   `DatabaseService`: 管理 SQLite 数据库读写。
-*   **核心层 (`app/core`)**: 定义 `BaseCamera` 和 `BaseConveyor` 接口，实现硬件解耦。
-*   **驱动层 (`app/drivers`)**: 具体的硬件驱动实现（如 `MockCamera`）。
+## 相机触发（四档）
+
+| 模式 | 相机配置 | 用途 |
+|------|---------|------|
+| preview | TriggerMode=Off 连续出图 | 预览/调焦 |
+| hardware | TriggerMode=On + Line0 上升沿 + Debouncer | **产线**（光电触发） |
+| software_single | TriggerSource=Software + 按钮 | 调试单张 |
+| software_continuous | TriggerSource=Software + 按间隔 | 调试连续 |
+
+UI 侧边栏切换；DebouncerTime 可调；曝光固定（防拖影，配补光）。
+
+## 识别与存储
+
+- **原图**：`data/images/moss_<时间戳>.png`（PNG 无损，训练/大图查看）
+- **缩略图**：`data/images/thumb/moss_<时间戳>.png`（300px，界面展示）
+- **DB**：`data/moss.db`，records 表含 thumbnail_path
+- **滚动归档**：保留 `storage.retention_days`（默认 60 天）；启动只报告不删，24h 定时清理
+- **置信度拒识**：低于 `confidence_threshold`（默认 0.6）标"⚠️需复检"，DB 存原始数据不被污染
+- **纠错闭环**：纠错时图片归档到 `data/corrections/<正确标签>/`（ImageFolder 兼容，可直接重训）
+
+## 模型
+
+- 架构：MobileNetV2（torchvision），ImageNet 预训练迁移学习
+- 输入：224×224
+- 后端：`.pth`（torch，开发）/ `.onnx`（onnxruntime，产线）
+- 类别：A/B/C/D（从 checkpoint 的 classes 字段）
+
+## 部署到产线
+
+产线只装 onnxruntime，不装 torch：
+
+```bash
+pip install -r requirements.txt
+# 传 models/mobilenetv2_best.onnx + mobilenetv2_best.json
+# config.json → model_settings.current_model_name 改为 "mobilenetv2_best.onnx"
+python run.py
+```
+
+## 训练 / 评估 / 导出
+
+```bash
+# 训练（原始数据按 一级/二级/三级/四级 文件夹组织 → A/B/C/D，自动 80/20 划分）
+python converter/train_moss.py --src "原始数据路径" --img-size 224
+
+# 评估（混淆矩阵 + 各类 precision/recall/F1）
+python converter/eval_moss.py
+
+# 列误判样本（人工复核，可筛方向如 C→A）
+python converter/list_errors.py --from C --to A
+
+# 导出 ONNX（产线部署用）
+python converter/export_onnx.py models/mobilenetv2_best.pth
+```
 
 ## 目录结构
 
 ```
-root/
-├── app/
-│   ├── core/           # 核心接口 (Interfaces)
-│   ├── drivers/        # 硬件驱动 (Mock/Real)
-│   ├── ui/             # 界面组件 (MainWindow, Widgets)
-│   ├── controllers/    # 业务逻辑控制
-│   ├── services/       # 后台服务 (AI, DB)
-│   ├── utils/          # 工具类 (Config)
-│   └── main.py         # 应用入口
-├── config/
-│   └── config.json     # 系统配置文件
-├── data/               # 数据存储 (Images, SQLite DB)
-├── models/             # 模型文件存放目录
-├── run.py              # 启动脚本
-└── README.md           # 项目文档
+app/
+├── core/           # BaseCamera 接口（含触发）
+├── drivers/        # HikvisionCamera / MockCamera / hikvision_sdk/
+├── controllers/    # SystemController + SystemWorker
+├── services/       # ModelService / DatabaseService
+├── ui/             # MainWindow / widgets
+├── utils/          # ConfigManager / DiskMonitor / logger
+└── main.py
+config/config.json
+converter/          # train_moss / eval_moss / list_errors / export_onnx
+data/               # images/ + corrections/ + moss.db（gitignore，运行时生成）
+models/             # *.pth / *.onnx / *.json（gitignore）
+requirements.txt
+run.py
 ```
 
-## 环境要求
+## 配置（config.json 关键项）
 
-*   **操作系统**: Windows / Linux / macOS
-*   **Python 版本**: 3.9+
-*   **依赖库**:
-    *   PySide6
-    *   torch, torchvision
-    *   timm
-    *   Pillow
-    *   requests
+- `camera_settings.trigger`：mode / source / activation / debouncer_time_us / grab_timeout_ms / software_interval_ms
+- `camera_settings.exposure`：固定曝光（微秒）
+- `model_settings.confidence_threshold`：拒识阈值
+- `storage.retention_days`：滚动归档保留天数
 
-## 安装与运行
+## 依赖
 
-1.  **克隆项目或下载源码**
-
-2.  **安装依赖**
-    ```bash
-    pip install PySide6 torch torchvision timm Pillow requests
-    ```
-
-3.  **运行程序**
-    在项目根目录下执行：
-    ```bash
-    python run.py
-    ```
-
-## 配置说明
-
-系统配置文件位于 `config/config.json`。首次运行会自动生成默认配置。
-
-```json
-{
-    "camera_settings": {
-        "driver_type": "mock",         // "mock" 或 "hikvision"
-        "capture_frequency_ms": 1000,  // 采集频率
-        "exposure": "auto"             // 曝光设置: "auto" 或 整数(微秒)
-    },
-    "conveyor_settings": {
-        "speed_mm_per_s": 50           // 传送带速度
-    },
-    "model_settings": {
-        "current_model_name": "efficientnet_b0", // 使用的模型名称
-        "models_directory": "models/"            // 模型下载/加载目录
-    },
-    "data_paths": {
-        "collected_data_directory": "data/images/", // 图片保存路径
-        "db_filename": "data/moss.db"               // 数据库路径
-    }
-}
-```
-
-## 开发指南
-
-### 1. 相机驱动配置
-
-本系统内置了 **Mock 模拟相机** 和 **海康威视 (Hikvision)** 工业相机驱动。
-
-**启用海康威视相机：**
-
-1.  确保已安装海康威视 MVS 客户端（提供必要的 DLL 运行时）。
-2.  修改 `config/config.json`：
-    ```json
-    "camera_settings": {
-        "driver_type": "hikvision",  // 设置为 "hikvision"
-        "capture_frequency_ms": 1000
-    }
-    ```
-3.  如果系统检测不到 MVS 运行时，程序会自动回退到 Mock 模式。
-
-**添加其他相机驱动：**
-
-1.  在 `app/drivers/` 下创建新驱动文件（如 `basler_driver.py`），实现 `BaseCamera` 接口。
-2.  在 `app/controllers/system_controller.py` 中注册新驱动的加载逻辑。
-
-### 2. AI 模型管理
-
-本系统支持 **在线下载模型** 和 **加载本地自定义模型**。
-
-**在线模型：**
-系统基于 `timm` 库，支持下载并使用其提供的预训练模型（如 `efficientnet_b0`, `resnet50` 等）。
-*   在界面下拉菜单中选择模型，系统会自动下载。
-*   下载后的模型保存在 `models/hub` 目录下。
-
-**自定义模型 (本地训练)：**
-您可以加载自己训练的 `.pth` 或 `.pt` 权重文件。
-
-1.  **文件命名**：为了让系统自动识别模型架构，请在文件名前加上架构名称前缀。
-    *   `resnet50_my_model.pth` -> 识别为 **ResNet50**
-    *   `mobilenetv3_large_100_custom.pt` -> 识别为 **MobileNetV3**
-    *   `my_model.pth` (无前缀) -> 默认识别为 **EfficientNet-B0**
-2.  **文件放置**：将文件直接放入项目根目录下的 `models/` 文件夹中。
-3.  **加载**：重启程序或刷新下拉菜单，您的模型将出现在列表中，选择即可即时切换。
+见 `requirements.txt`：
+- **产线**：PySide6 + Pillow + numpy + onnxruntime（不装 torch）
+- **开发/训练/导出**：额外 torch / torchvision / timm / onnx
 
 ## 许可证
 
-MIT License
+MIT

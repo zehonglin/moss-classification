@@ -201,7 +201,7 @@ class ModelService:
             if not os.path.exists(weights_path):
                 logger.error(f"Model file not found: {weights_path}")
                 return False
-            checkpoint = torch.load(weights_path, map_location=self.device)
+            checkpoint = torch.load(weights_path, map_location=self.device, weights_only=False)
             if isinstance(checkpoint, dict):
                 state_dict = checkpoint.get('model_state_dict') or checkpoint.get('state_dict') or checkpoint
             else:

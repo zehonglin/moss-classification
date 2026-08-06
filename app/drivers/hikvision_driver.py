@@ -194,14 +194,11 @@ class HikvisionCamera(BaseCamera):
             logger.warning(f"Unknown trigger mode: {mode}")
 
     def enable_software_trigger(self):
-        """发一次软件触发（software_single / software_continuous 模式用）。"""
+        """发一次软件触发（software_single / software_continuous 模式用）。
+        SDK API: MV_CC_SetCommandValue('TriggerSoftware')（MvCameraControl_class.py:1245）。"""
         if not self.b_is_connected:
             return
-        try:
-            ret = self.handle.MV_CC_SetCommandValue("TriggerSoftware")
-        except AttributeError:
-            # 不同 SDK 版本方法名兼容
-            ret = self.handle.MV_CC_TriggerSoftwareExecute()
+        ret = self.handle.MV_CC_SetCommandValue("TriggerSoftware")
         if ret != 0:
             logger.error(f"Software trigger failed! ret=0x{ret:x}")
 
