@@ -29,3 +29,12 @@ def tmp_path():
 def pytest_sessionfinish(session, exitstatus):
     for d in _TMP_DIRS:
         shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _qapp():
+    """整个测试会话共用一个 offscreen QApplication（Qt Widget 测试必需）。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app

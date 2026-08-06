@@ -14,13 +14,14 @@ from app.utils.config_manager import ConfigManager
 logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager, controller=None):
         super().__init__()
         self.setWindowTitle("苔藓识别系统 - Pro")
         self.resize(1280, 800)
-        
+
         self.config = config_manager
-        self.controller = SystemController(self.config)
+        # controller 可注入（测试用）；生产路径由 SystemController 构造
+        self.controller = controller if controller is not None else SystemController(self.config)
         self.selected_history_item = None
         self.status = STATUS_IDLE
         self.confidence_threshold = self.config.get("model_settings.confidence_threshold", 0.6)
@@ -114,6 +115,16 @@ class MainWindow(QMainWindow):
         title.setObjectName("HeaderLabel")
         title.setAlignment(Qt.AlignCenter)
         main_sidebar_layout.addWidget(title)
+
+        # 模拟相机模式标识：仅显式配置 driver_type=mock 时可见，防止操作员误用
+        self.mock_badge = QLabel("模拟相机模式")
+        self.mock_badge.setObjectName("MockBadge")
+        self.mock_badge.setAlignment(Qt.AlignCenter)
+        self.mock_badge.setStyleSheet(
+            "background-color:#FFB300; color:#212121; border-radius:6px; padding:6px; font-weight:bold;"
+        )
+        self.mock_badge.setVisible(self.config.get("camera_settings.driver_type") == "mock")
+        main_sidebar_layout.addWidget(self.mock_badge)
         
         # Wrap contents in a scroll area to handle small vertical screens
         from PySide6.QtWidgets import QScrollArea

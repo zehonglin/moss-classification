@@ -24,6 +24,21 @@ STATUS_PREVIEWING = "PREVIEWING" # Camera connected, live view
 STATUS_RUNNING = "RUNNING" # Full processing loop
 
 
+def create_camera(driver_type: str):
+    """按配置创建相机驱动实例。
+
+    驱动类型必须显式配置：hikvision 加载失败直接抛 ImportError（启动失败，
+    绝不静默回退 Mock）；只有显式 "mock" 才允许使用模拟相机。
+    """
+    if driver_type == "hikvision":
+        from app.drivers.hikvision_driver import HikvisionCamera
+        return HikvisionCamera()
+    if driver_type == "mock":
+        from app.drivers.mock_driver import MockCamera
+        return MockCamera()
+    raise ValueError(f"未知的相机驱动类型: {driver_type!r}（可选: hikvision / mock）")
+
+
 def _qimage_to_pil(q_image):
     """QImage → PIL.Image(RGB)。直接读取像素缓冲，不依赖 Qt imageformats 插件
     （本机 PySide6 缺 JPEG 插件，QImage.save / QImageReader 对 JPEG 均不可用）。"""
@@ -346,20 +361,10 @@ class SystemController(QObject):
         self.cleanup_old_records(delete=False)  # 启动只报告，不自动删（防误删旧样本）
 
     def _initialize_hardware(self):
-        driver_type = self.config.get("camera_settings.driver_type", "mock")
-        try:
-            if driver_type == "hikvision":
-                from app.drivers.hikvision_driver import HikvisionCamera
-                self.camera = HikvisionCamera()
-                logger.info("Using Hikvision Camera Driver")
-            else:
-                from app.drivers.mock_driver import MockCamera
-                self.camera = MockCamera()
-                logger.info("Using Mock Camera Driver")
-        except ImportError as e:
-            logger.warning(f"Failed to load specified driver: {e}. Falling back to Mock.")
-            from app.drivers.mock_driver import MockCamera
-            self.camera = MockCamera()
+        driver_type = self.config.get("camera_settings.driver_type", "hikvision")
+        logger.info(f"Initializing camera driver: {driver_type}")
+        # 失败时直接抛错（启动失败），绝不静默回退模拟相机
+        self.camera = create_camera(driver_type)
 
     def _apply_trigger_config(self, mode):
         """按模式应用相机触发配置（source/activation/debouncer 从 config 读）。"""

@@ -33,7 +33,7 @@ class ConfigManager:
         self.config_data = {}
         self.default_config = {
             "camera_settings": {
-                "driver_type": "mock",
+                "driver_type": "hikvision",
                 "resolution_width": 2048,
                 "resolution_height": 2048,
                 "exposure": 10000,

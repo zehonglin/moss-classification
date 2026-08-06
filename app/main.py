@@ -29,7 +29,13 @@ def main():
     else:
         logging.warning(f"Stylesheet file '{qss_file}' not found.")
 
-    window = MainWindow(config_manager)
+    try:
+        window = MainWindow(config_manager)
+    except (ImportError, ValueError) as e:
+        # 相机驱动初始化失败：明确报错退出，禁止静默降级
+        QMessageBox.critical(None, "启动失败", f"相机驱动初始化失败: {e}\n请检查相机 SDK 与配置。")
+        logging.error(f"Camera driver init failed: {e}")
+        sys.exit(1)
     window.show()
     sys.exit(app.exec())
 
