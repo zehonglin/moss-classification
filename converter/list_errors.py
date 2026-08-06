@@ -3,19 +3,19 @@ import os
 import argparse
 import torch
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, models as tv_models
-import torch.nn as nn
+from torchvision import datasets, transforms
+from build_model import build_model
 
 
-def main(model_path, data_root, src, dst):
+def main(model_path, data_root, src, dst, num_workers=2):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
     classes = ckpt['classes']
     img_size = ckpt.get('img_size', 224)
     n = len(classes)
 
-    model = tv_models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, n)
+    arch = ckpt.get('architecture', 'mobilenet_v2')
+    model = build_model(arch, n, ckpt['model_state_dict'])
     model.load_state_dict(ckpt['model_state_dict'])
     model = model.to(device).eval()
 
@@ -25,7 +25,7 @@ def main(model_path, data_root, src, dst):
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
     ds = datasets.ImageFolder(os.path.join(data_root, 'val'), transform=tfm)
-    loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=2)
+    loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=num_workers)
     names = ds.classes
 
     res = []
@@ -54,5 +54,6 @@ if __name__ == '__main__':
     p.add_argument('--data-root', default='data/dataset')
     p.add_argument('--from', dest='src', default=None, help='筛选：真实标签（如 C）')
     p.add_argument('--to', dest='dst', default=None, help='筛选：预测标签（如 A）')
+    p.add_argument('--workers', type=int, default=2, help='DataLoader 进程数（Windows 受限环境可设 0）')
     args = p.parse_args()
-    main(args.model, args.data_root, args.src, args.dst)
+    main(args.model, args.data_root, args.src, args.dst, num_workers=args.workers)
