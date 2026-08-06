@@ -275,6 +275,10 @@ class ModelService:
         return None
 
     # ---------------- 推理 ----------------
+    def is_ready(self) -> bool:
+        """模型是否已加载（onnx session 或 torch model 任一就绪）。"""
+        return self.session is not None or self.model is not None
+
     def predict(self, q_image: QImage):
         with self._model_lock:
             if self.session is not None:

@@ -154,6 +154,14 @@ class SystemWorker(QObject):
                     
                     if self._stop_event.is_set():
                         break
+
+                    # 模型未加载：立即停止，不落库、不存图（防止产出"模型未加载"假记录）
+                    if prediction == "模型未加载" and not self._stop_event.is_set():
+                        self.error_occurred.emit(
+                            "模型未加载，采集已停止。请选择可用模型后重新启动。"
+                        )
+                        self._stop_event.set()
+                        break
                     
                     # 3. Check disk space before saving image
                     save_dir = self.config.get("data_paths.collected_data_directory", "data/images/")
@@ -445,6 +453,9 @@ class SystemController(QObject):
 
     def start_system(self):
         """启动采集（仅 hardware / software_continuous 模式走此入口）。"""
+        if not self.model_service.is_ready():
+            self._handle_error("模型未加载，无法启动采集。请先选择并加载模型。")
+            return
         if not self.camera.is_connected():
             self._handle_error("相机未连接。")
             return
