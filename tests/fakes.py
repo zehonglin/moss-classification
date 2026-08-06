@@ -41,3 +41,11 @@ class FakeController(QObject):
 
     def correct_prediction(self, record_id, label):
         self.corrections.append((record_id, label))
+
+    def get_filtered_records(self, prediction=None, quality_status=None, limit=200):
+        self.last_filter = {"prediction": prediction, "quality_status": quality_status}
+        return getattr(self, "filtered", [])
+
+    def export_history_csv(self, path, rows):
+        self.exported = (path, rows)
+        return len(rows)

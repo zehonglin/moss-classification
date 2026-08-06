@@ -24,6 +24,21 @@ STATUS_PREVIEWING = "PREVIEWING" # Camera connected, live view
 STATUS_RUNNING = "RUNNING" # Full processing loop
 
 
+def export_records_csv(filepath: str, rows) -> int:
+    """导出记录为 CSV（UTF-8 BOM，Excel 可直接打开）。返回导出条数。"""
+    import csv
+
+    with open(filepath, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "id", "timestamp", "image_path", "thumbnail_path",
+            "prediction", "confidence", "corrected_label", "quality_status",
+        ])
+        for row in rows:
+            writer.writerow(list(row))
+    return len(rows)
+
+
 def create_camera(driver_type: str, serial_number: str = None):
     """按配置创建相机驱动实例。
 
@@ -816,6 +831,20 @@ class SystemController(QObject):
 
     def get_recent_records(self, limit=50):
         return self.db_service.get_recent_records(limit)
+
+    def get_filtered_records(self, prediction=None, quality_status=None, limit=200):
+        """历史检索：按品级/质量状态筛选（供 UI 查询）。"""
+        return self.db_service.search_records(
+            prediction=prediction or None,
+            quality_status=quality_status,
+            limit=limit,
+        )
+
+    def export_history_csv(self, filepath, rows):
+        """导出历史记录为 CSV。"""
+        n = export_records_csv(filepath, rows)
+        logger.info(f"Exported {n} records to {filepath}")
+        return n
 
     def _handle_error(self, message):
         """

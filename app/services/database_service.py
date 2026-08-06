@@ -188,6 +188,42 @@ class DatabaseService:
                 logger.error(f"Database error in get_recent_records: {e}")
                 return []
 
+    def search_records(self, prediction=None, quality_status=None,
+                       start_time=None, end_time=None, limit: int = 200) -> list:
+        """按品级/质量状态/时间范围筛选记录（列与 get_recent_records 一致）。
+
+        quality_status: None=全部, "ok"=正常, "rejected"=拒采, 其他=精确状态值。
+        """
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                sql = (
+                    "SELECT id, timestamp, image_path, thumbnail_path, prediction, "
+                    "confidence, corrected_label, quality_status FROM records WHERE 1=1"
+                )
+                params = []
+                if prediction:
+                    sql += " AND prediction = ?"
+                    params.append(prediction)
+                if quality_status == "rejected":
+                    sql += " AND quality_status != 'ok'"
+                elif quality_status and quality_status != "all":
+                    sql += " AND quality_status = ?"
+                    params.append(quality_status)
+                if start_time:
+                    sql += " AND timestamp >= ?"
+                    params.append(start_time)
+                if end_time:
+                    sql += " AND timestamp <= ?"
+                    params.append(end_time)
+                sql += " ORDER BY id DESC LIMIT ?"
+                params.append(limit)
+                return cursor.execute(sql, params).fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Database error in search_records: {e}")
+                return []
+
     def get_record(self, record_id: int):
         """按 id 查单条记录。返回 (id, timestamp, image_path, prediction, confidence, corrected_label) 或 None。"""
         with self._lock:

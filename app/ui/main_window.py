@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QSplitter, QLabel,
     QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy, QFormLayout,
     QComboBox, QSpinBox, QDoubleSpinBox, QSlider, QLineEdit, QInputDialog, QListWidget,
-    QListWidgetItem, QCheckBox, QAbstractSpinBox
+    QListWidgetItem, QCheckBox, QAbstractSpinBox, QFileDialog, QMessageBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
@@ -68,11 +68,11 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         
         self.image_feed_label = self._create_image_feed_area()
-        self.history_list_widget = self._create_history_area()
+        history_area = self._create_history_area()  # 容器：筛选栏 + 历史列表
         self.history_list_widget.itemClicked.connect(self._on_history_item_clicked)
         
         splitter.addWidget(self.image_feed_label)
-        splitter.addWidget(self.history_list_widget)
+        splitter.addWidget(history_area)
         splitter.setSizes([700, 400]) 
         
         content_layout.addWidget(splitter, 1) # Set stretch factor to 1 to take remaining space
@@ -289,9 +289,31 @@ class MainWindow(QMainWindow):
         return label
 
     def _create_history_area(self):
-        list_widget = QListWidget()
-        list_widget.setSpacing(5)
-        return list_widget
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("品级:"))
+        self.history_pred_combo = QComboBox()
+        self.history_pred_combo.addItems(["全部品级", "A", "B", "C", "D"])
+        filter_row.addWidget(self.history_pred_combo)
+        filter_row.addWidget(QLabel("状态:"))
+        self.history_quality_combo = QComboBox()
+        self.history_quality_combo.addItems(["全部状态", "正常", "拒采"])
+        filter_row.addWidget(self.history_quality_combo)
+        self.filter_button = QPushButton("查询")
+        self.filter_button.clicked.connect(self._on_history_filter_clicked)
+        filter_row.addWidget(self.filter_button)
+        self.export_button = QPushButton("导出 CSV")
+        self.export_button.clicked.connect(self._on_export_clicked)
+        filter_row.addWidget(self.export_button)
+        layout.addLayout(filter_row)
+
+        self.history_list_widget = QListWidget()
+        self.history_list_widget.setSpacing(5)
+        layout.addWidget(self.history_list_widget)
+        return container
 
     def _on_exposure_changed(self):
         exposure_value = self.exposure_spinbox.value()
@@ -623,8 +645,11 @@ class MainWindow(QMainWindow):
                     self.image_feed_label.setText(f"无法加载图片:\n{img_path}")
 
     def _load_history(self):
+        self._populate_history(self.controller.get_recent_records())
+
+    def _populate_history(self, records):
         self.history_list_widget.clear()
-        for record in self.controller.get_recent_records():
+        for record in records:
             item = QListWidgetItem() # Create item without parent
             item.setData(Qt.UserRole, record)
             item_widget = HistoryItemWidget(
@@ -640,6 +665,36 @@ class MainWindow(QMainWindow):
             item.setSizeHint(item_widget.sizeHint())
             self.history_list_widget.addItem(item)
             self.history_list_widget.setItemWidget(item, item_widget)
+
+    def _on_history_filter_clicked(self):
+        """按品级/状态查询历史（从 DB 检索，最多 200 条）。"""
+        pred = self.history_pred_combo.currentText()
+        quality_map = {"全部状态": None, "正常": "ok", "拒采": "rejected"}
+        quality = quality_map.get(self.history_quality_combo.currentText())
+        records = self.controller.get_filtered_records(
+            prediction=None if pred == "全部品级" else pred,
+            quality_status=quality,
+            limit=200,
+        )
+        self._populate_history(records)
+
+    def _on_export_clicked(self):
+        """导出当前筛选结果为 CSV。"""
+        pred = self.history_pred_combo.currentText()
+        quality_map = {"全部状态": None, "正常": "ok", "拒采": "rejected"}
+        quality = quality_map.get(self.history_quality_combo.currentText())
+        records = self.controller.get_filtered_records(
+            prediction=None if pred == "全部品级" else pred,
+            quality_status=quality,
+            limit=200,
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出记录", "moss_records.csv", "CSV 文件 (*.csv)"
+        )
+        if not path:
+            return
+        n = self.controller.export_history_csv(path, records)
+        QMessageBox.information(self, "导出完成", f"已导出 {n} 条记录:\n{path}")
 
     def closeEvent(self, event):
         """窗口关闭时清理：停止 worker、断开相机、关闭数据库（WAL checkpoint）。"""
