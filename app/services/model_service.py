@@ -136,8 +136,7 @@ class ModelService:
             if not os.path.exists(onnx_path):
                 logger.error(f"ONNX model not found: {onnx_path}")
                 return False
-            providers = (['CUDAExecutionProvider', 'CPUExecutionProvider']
-                         if self.device == 'cuda' else ['CPUExecutionProvider'])
+            providers = self._pick_providers(self.device, ort.get_available_providers())
             session = ort.InferenceSession(onnx_path, providers=providers)
 
             input_meta = session.get_inputs()[0]
@@ -166,6 +165,16 @@ class ModelService:
         except Exception:
             logger.exception(f"Failed to load ONNX model '{model_name}':")
             return False
+
+    @staticmethod
+    def _pick_providers(device: str, available) -> list:
+        """按设备选择 onnxruntime providers，过滤当前运行时不可用的 provider。"""
+        requested = (
+            ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            if device == 'cuda'
+            else ['CPUExecutionProvider']
+        )
+        return [p for p in requested if p in available]
 
     def _load_torch(self, model_name):
         if not _TORCH_AVAILABLE:

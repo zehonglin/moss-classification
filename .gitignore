@@ -43,6 +43,8 @@ models/*.pt
 models/*.onnx
 models/*.bin
 models/*.safetensors
+# ONNX sidecar（export_onnx.py 生成）
+models/*.json
 # 模型下载缓存
 models/hub/
 models/xet/

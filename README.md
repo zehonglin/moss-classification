@@ -63,6 +63,22 @@ pip install -r requirements.txt
 python run.py
 ```
 
+### ONNX CPU 推理验证（性能基线）
+
+产线无 GPU，推理走 onnxruntime CPU。开发机实测（onnxruntime 1.28 + CPU）：
+
+- 模型：`mobilenetv2_best.onnx`（MobileNetV2，输入 224×224，8.5MB）
+- 100 帧基准：平均 **32.3ms/帧**（含 2048×2048 QImage→numpy 转换 + 缩放 + 推理），远低于 500ms/帧目标
+- torch vs onnx 数值校验：最大差异 < 1e-3（`export_onnx.py` 导出时自动校验）
+
+部署后在产线机复测：
+
+```bash
+python -c "from app.services.model_service import ModelService; import time; from PySide6.QtGui import QImage; ms=ModelService('mobilenetv2_best.onnx'); q=QImage(2048,2048,QImage.Format.Format_RGB888); [ms.predict(q) for _ in range(5)]; t=time.time(); [ms.predict(q) for _ in range(100)]; print('avg_ms:', (time.time()-t)*10)"
+```
+
+若平均耗时超过 500ms/帧：检查 onnxruntime provider、CPU 是否降频、是否有杀毒软件实时扫描干扰。
+
 ## 训练 / 评估 / 导出
 
 ```bash
