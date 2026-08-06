@@ -2,7 +2,7 @@ import logging
 import threading
 from PySide6.QtCore import QObject, Signal, QThread, QTimer
 from PySide6.QtGui import QImage
-from app.core.interfaces import BaseCamera, BaseConveyor
+from app.core.interfaces import BaseCamera
 from app.services.model_service import ModelService
 from app.services.database_service import DatabaseService
 from app.utils.config_manager import ConfigManager
@@ -83,12 +83,15 @@ class SystemWorker(QObject):
         """
         with self._state_lock:
             self._stop_event.clear()  # Reset stop signal
-        
-        logger.info("Processing loop started.")
-        
-        # Track consecutive errors for smart failure detection
+
+        # 触发参数（worker 仅在 hardware / software_continuous 模式启动）
+        mode = self.config.get("camera_settings.trigger.mode", "hardware")
+        grab_timeout = self.config.get("camera_settings.trigger.grab_timeout_ms", 2000)
+        sw_interval = self.config.get("camera_settings.trigger.software_interval_ms", 1000)
+        logger.info(f"Processing loop started (trigger={mode}).")
+
         consecutive_errors = 0
-        MAX_CONSECUTIVE_ERRORS = 10  # Stop after 10 consecutive failures
+        MAX_CONSECUTIVE_ERRORS = 10
         
         while not self._stop_event.is_set():
             try:
@@ -98,10 +101,15 @@ class SystemWorker(QObject):
                 if self._stop_event.is_set():
                     break
                 
-                # 1. Capture（加锁，与预览线程串行访问相机）
+                # 1. software_continuous：主动发一次软件触发（hardware 由光电触发，无需）
+                if mode == "software_continuous" and not self._stop_event.is_set():
+                    self.camera.enable_software_trigger()
+                if self._stop_event.is_set():
+                    break
+                # 2. 取图（触发模式阻塞等触发图；grab_timeout 内可检查 stop）
                 capture_start_time = time.time()
                 with self._camera_lock:
-                    image = self.camera.get_frame()
+                    image = self.camera.get_frame(timeout_ms=grab_timeout)
                 capture_duration = (time.time() - capture_start_time) * 1000
                 
                 if image and not self._stop_event.is_set():
@@ -175,25 +183,19 @@ class SystemWorker(QObject):
                     # Successful frame - reset error counter
                     consecutive_errors = 0
 
-                # Frequency Control & Logging
-                freq_ms = self.config.get("camera_settings.capture_frequency_ms", 1000)
-                if freq_ms <= 0: freq_ms = 100
-                
+                # 节拍：software_continuous 按 sw_interval；hardware 无 sleep（由光电触发决定）
                 total_processing_time = (time.time() - loop_start_time) * 1000
-                sleep_time_ms = freq_ms - total_processing_time
-                
-                if image:  # Only log if we captured a frame
+                if image:
                     logger.info(
                         f"Loop Profile: Capture={capture_duration:.2f}ms, Predict={predict_duration:.2f}ms, "
                         f"SaveImg={save_img_duration:.2f}ms, SaveDB={save_db_duration:.2f}ms | "
-                        f"Total={total_processing_time:.2f}ms, Target={freq_ms}ms, Sleep={max(0, sleep_time_ms):.2f}ms"
+                        f"Total={total_processing_time:.2f}ms (trigger={mode})"
                     )
-
-                # Use Event.wait() for interruptible sleep instead of QThread.msleep()
-                # This allows the loop to exit immediately when stop_loop() is called
-                if sleep_time_ms > 0 and not self._stop_event.is_set():
-                    # wait() returns True if the event is set during the wait
-                    self._stop_event.wait(timeout=sleep_time_ms / 1000.0)
+                if mode == "software_continuous":
+                    sleep_time_ms = sw_interval - total_processing_time
+                    if sleep_time_ms > 0 and not self._stop_event.is_set():
+                        self._stop_event.wait(timeout=sleep_time_ms / 1000.0)
+                # hardware 模式：无 sleep，立即回到循环顶 get_frame 阻塞等下一次光电触发
             
             except (OSError, IOError) as e:
                 # File system errors - potentially recoverable
@@ -327,8 +329,53 @@ class SystemController(QObject):
             from app.drivers.mock_driver import MockCamera
             self.camera = MockCamera()
 
-        from app.drivers.mock_driver import MockConveyor
-        self.conveyor = MockConveyor()
+    def _apply_trigger_config(self, mode):
+        """按模式应用相机触发配置（source/activation/debouncer 从 config 读）。"""
+        if not self.camera.is_connected():
+            return
+        self.camera.set_trigger_config(
+            mode,
+            source=self.config.get("camera_settings.trigger.source", "Line0"),
+            activation=self.config.get("camera_settings.trigger.activation", "RisingEdge"),
+            debouncer_time_us=self.config.get("camera_settings.trigger.debouncer_time_us", 5000),
+        )
+
+    def set_trigger_mode(self, mode):
+        """UI 切换触发模式：记录 config + 管理 preview_timer + 配相机。"""
+        self.config.set("camera_settings.trigger.mode", mode)
+        if not self.camera.is_connected():
+            return
+        if mode == "preview":
+            self.preview_timer.stop()
+            self._apply_trigger_config("preview")
+            self.preview_timer.start()
+        elif mode == "software_single":
+            self.preview_timer.stop()
+            self._apply_trigger_config("software_single")
+        # hardware / software_continuous：保持预览看画面，start_system 时再配触发
+
+    def capture_single(self):
+        """software_single 拍照：触发一张 + 推理 + 显示（不存库，调试用）。"""
+        if not self.camera.is_connected():
+            self._handle_error("相机未连接。")
+            return
+        try:
+            grab_timeout = self.config.get("camera_settings.trigger.grab_timeout_ms", 2000)
+            with self._camera_lock:
+                self.camera.enable_software_trigger()
+                image = self.camera.get_frame(timeout_ms=grab_timeout)
+            if image:
+                self.image_updated.emit(image)
+                prediction, confidence = self.model_service.predict(image)
+                self.result_updated.emit({
+                    "id": None, "timestamp": datetime.now().isoformat(),
+                    "image_path": None, "thumbnail_path": None,
+                    "prediction": prediction, "confidence": confidence,
+                    "corrected_label": None,
+                })
+                logger.info(f"Single capture: {prediction} @ {confidence:.3f}")
+        except Exception as e:
+            self._handle_error(f"Single capture failed: {e}")
 
     def connect_camera(self):
         try:
@@ -343,6 +390,8 @@ class SystemController(QObject):
             height = self.config.get("camera_settings.resolution_height", 2048)
             self.set_camera_resolution(width, height)
 
+            # 默认预览模式（连续出图）
+            self._apply_trigger_config("preview")
             self.preview_timer.start()
             self.status_updated.emit(STATUS_PREVIEWING)
             logger.info("Camera connected, preview started.")
@@ -358,58 +407,40 @@ class SystemController(QObject):
         logger.info("Camera disconnected.")
 
     def start_system(self):
+        """启动采集（仅 hardware / software_continuous 模式走此入口）。"""
         if not self.camera.is_connected():
-            self._handle_error("Camera is not connected.")
+            self._handle_error("相机未连接。")
+            return
+        mode = self.config.get("camera_settings.trigger.mode", "hardware")
+        if mode not in ("hardware", "software_continuous"):
+            self._handle_error(f"模式 '{mode}' 不需要启动采集（preview 看画面 / software_single 用拍照按钮）。")
             return
         try:
-            logger.info("Starting full system processing...")
-            self.preview_timer.stop() # Stop preview
-            
-            # Apply latest settings before starting
+            logger.info(f"Starting processing (trigger={mode})...")
+            self.preview_timer.stop()
             self.set_camera_exposure(self.config.get("camera_settings.exposure"))
-
-            self.conveyor.start()
-            self.conveyor.set_speed(self.config.get("conveyor_settings.speed_mm_per_s"))
-            
+            self._apply_trigger_config(mode)  # 配触发参数（Line0 或 Software）
             if not self.worker_thread.isRunning():
                 self.worker_thread.start()
-                
             self.status_updated.emit(STATUS_RUNNING)
-            logger.info("Full system processing started.")
+            logger.info("Processing started.")
         except Exception as e:
             self._handle_error(f"Failed to start system: {e}")
 
     def stop_system(self):
-        """
-        Stops the full system processing loop.
-        Thread-safe: uses Event signaling for reliable stop.
-        """
-        logger.info("Stopping full system processing...")
-        
+        """停止采集，恢复预览模式。"""
+        logger.info("Stopping processing...")
         if self.worker_thread.isRunning():
-            # Signal the worker to stop (thread-safe via Event)
             self.worker.stop_loop()
-            
-            # Wait for thread to finish with extended timeout
-            # Since we use Event.wait() for sleep, the loop should exit quickly
-            if not self.worker_thread.wait(5000):  # 5 second timeout
-                logger.warning(
-                    "Worker thread did not stop within 5 seconds. "
-                    "This may indicate a blocking operation in the processing loop."
-                )
-                # Note: We don't forcefully terminate as that could cause corruption
-                # The thread will eventually stop when the current operation completes
-        
-        self.conveyor.stop()
-        
-        # Return to previewing if camera is still connected
+            if not self.worker_thread.wait(5000):
+                logger.warning("Worker thread did not stop within 5 seconds.")
         if self.camera.is_connected():
+            self._apply_trigger_config("preview")  # 切回连续模式
             self.preview_timer.start()
             self.status_updated.emit(STATUS_PREVIEWING)
-            logger.info("System stopped, returned to preview mode.")
+            logger.info("Stopped, returned to preview.")
         else:
             self.status_updated.emit(STATUS_IDLE)
-            logger.info("System stopped, camera is disconnected.")
 
     def shutdown(self):
         """Cleanly shuts down all components."""

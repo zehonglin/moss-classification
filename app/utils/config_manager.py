@@ -29,14 +29,18 @@ class ConfigManager:
         self.config_data = {}
         self.default_config = {
             "camera_settings": {
-                "capture_frequency_ms": 1000,
-                "exposure": "auto",
-                "focus": "auto",
-                "aperture": "f/2.8",
-                "driver_type": "mock"  # Added for completeness
-            },
-            "conveyor_settings": {
-                "speed_mm_per_s": 50
+                "driver_type": "mock",
+                "resolution_width": 2048,
+                "resolution_height": 2048,
+                "exposure": 10000,
+                "trigger": {
+                    "mode": "preview",
+                    "source": "Line0",
+                    "activation": "RisingEdge",
+                    "debouncer_time_us": 5000,
+                    "grab_timeout_ms": 2000,
+                    "software_interval_ms": 1000
+                }
             },
             "model_settings": {
                 "current_model_name": "efficientnet_b0",

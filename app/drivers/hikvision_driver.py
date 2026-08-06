@@ -112,7 +112,10 @@ class HikvisionCamera(BaseCamera):
 
         self.b_is_connected = True
         self._frame_count = 0
-        logger.info("Hikvision Camera Connected.")
+        # 默认连续模式（预览）+ 手动曝光（触发抓拍要求固定曝光）
+        self.handle.MV_CC_SetEnumValueByString("TriggerMode", "Off")
+        self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Off")
+        logger.info("Hikvision Camera Connected (TriggerMode=Off, ExposureAuto=Off).")
 
     def disconnect(self):
         if not self.b_is_connected or self.handle is None:
@@ -154,26 +157,53 @@ class HikvisionCamera(BaseCamera):
         return self.b_is_connected
 
     def set_exposure(self, value):
-        """Set the camera's exposure time (in microseconds)."""
+        """设置曝光时间（微秒，固定值）。触发抓拍禁用 auto 以保证每张曝光一致。"""
         if not self.b_is_connected:
             return
+        ret = self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Off")
+        if ret != 0:
+            logger.error(f"Set manual exposure failed! ret=0x{ret:x}")
+            return
+        ret = self.handle.MV_CC_SetFloatValue("ExposureTime", float(value))
+        if ret != 0:
+            logger.error(f"Set exposure time failed! ret=0x{ret:x}")
 
-        if value == "auto":
-            # Set to auto exposure
-            ret = self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Continuous")
-            if ret != 0:
-                logger.error(f"Set auto exposure failed! ret=0x{ret:x}")
+    def set_trigger_config(self, mode, source=None, activation=None, debouncer_time_us=None):
+        """配置触发模式：preview / hardware / software_single / software_continuous。"""
+        if not self.b_is_connected:
+            return
+        if mode == "preview":
+            self.handle.MV_CC_SetEnumValueByString("TriggerMode", "Off")
+            logger.info("Trigger: preview (TriggerMode=Off 连续出图)")
+        elif mode == "hardware":
+            src = source or "Line0"
+            self.handle.MV_CC_SetEnumValueByString("TriggerMode", "On")
+            self.handle.MV_CC_SetEnumValueByString("TriggerSource", src)
+            self.handle.MV_CC_SetEnumValueByString("TriggerActivation", activation or "RisingEdge")
+            self.handle.MV_CC_SetEnumValueByString("LineSelector", src)  # 选 Line 再设防抖
+            if debouncer_time_us is not None:
+                ret = self.handle.MV_CC_SetFloatValue("LineDebouncerTime", float(debouncer_time_us))
+                if ret != 0:
+                    logger.error(f"Set LineDebouncerTime failed! ret=0x{ret:x}")
+            logger.info(f"Trigger: hardware ({src}, {activation or 'RisingEdge'}, debounce={debouncer_time_us}us)")
+        elif mode in ("software_single", "software_continuous"):
+            self.handle.MV_CC_SetEnumValueByString("TriggerMode", "On")
+            self.handle.MV_CC_SetEnumValueByString("TriggerSource", "Software")
+            logger.info(f"Trigger: {mode} (Software source)")
         else:
-            # Set to manual exposure
-            ret = self.handle.MV_CC_SetEnumValueByString("ExposureAuto", "Off")
-            if ret != 0:
-                logger.error(f"Set manual exposure failed! ret=0x{ret:x}")
-                return
+            logger.warning(f"Unknown trigger mode: {mode}")
 
-            # Set the exposure time
-            ret = self.handle.MV_CC_SetFloatValue("ExposureTime", float(value))
-            if ret != 0:
-                logger.error(f"Set exposure time failed! ret=0x{ret:x}")
+    def enable_software_trigger(self):
+        """发一次软件触发（software_single / software_continuous 模式用）。"""
+        if not self.b_is_connected:
+            return
+        try:
+            ret = self.handle.MV_CC_SetCommandValue("TriggerSoftware")
+        except AttributeError:
+            # 不同 SDK 版本方法名兼容
+            ret = self.handle.MV_CC_TriggerSoftwareExecute()
+        if ret != 0:
+            logger.error(f"Software trigger failed! ret=0x{ret:x}")
 
     def set_resolution(self, width: int, height: int):
         """Sets the camera resolution. This requires stopping and restarting the stream."""
@@ -251,7 +281,7 @@ class HikvisionCamera(BaseCamera):
             
         return resolution_changed
 
-    def get_frame(self) -> QImage | None:
+    def get_frame(self, timeout_ms: int | None = None) -> QImage | None:
         if not self.b_is_connected:
             return None
 
@@ -262,7 +292,9 @@ class HikvisionCamera(BaseCamera):
         memset(ctypes.byref(stOutFrame), 0, ctypes.sizeof(stOutFrame))
 
         # Use configurable timeout instead of fixed 1000ms
-        ret = self.handle.MV_CC_GetImageBuffer(stOutFrame, self._timeout_ms)
+        # 触发模式可传入更长 timeout（阻塞等触发）；连续模式用默认
+        timeout = timeout_ms if timeout_ms is not None else self._timeout_ms
+        ret = self.handle.MV_CC_GetImageBuffer(stOutFrame, timeout)
         
         if ret == 0:
             # Success - reset failure counter

@@ -131,10 +131,21 @@ class MainWindow(QMainWindow):
         controls_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         controls_layout.setVerticalSpacing(15)
 
-        self.speed_spinbox = QSpinBox()
-        self.speed_spinbox.setRange(0, 500)
-        self.speed_spinbox.setValue(self.config.get("conveyor_settings.speed_mm_per_s", 50))
-        controls_layout.addRow("传送带速度 (mm/s):", self._create_spinbox_control(self.speed_spinbox))
+        # --- 触发模式 ---
+        self.trigger_combo = QComboBox()
+        self.trigger_combo.addItems(["预览模式", "传感器触发", "软件手动触发", "软件连续触发"])
+        self._trigger_mode_keys = ["preview", "hardware", "software_single", "software_continuous"]
+        cur_mode = self.config.get("camera_settings.trigger.mode", "preview")
+        self.trigger_combo.setCurrentIndex(self._trigger_mode_keys.index(cur_mode) if cur_mode in self._trigger_mode_keys else 0)
+        self.trigger_combo.currentIndexChanged.connect(self._on_trigger_mode_changed)
+        controls_layout.addRow("触发模式:", self.trigger_combo)
+
+        self.debouncer_spinbox = QSpinBox()
+        self.debouncer_spinbox.setRange(0, 100000)
+        self.debouncer_spinbox.setSingleStep(500)
+        self.debouncer_spinbox.setValue(self.config.get("camera_settings.trigger.debouncer_time_us", 5000))
+        self.debouncer_spinbox.setSuffix(" us")
+        controls_layout.addRow("触发防抖:", self._create_spinbox_control(self.debouncer_spinbox))
 
         # --- Resolution Controls ---
         self.width_spinbox = QSpinBox()
@@ -154,39 +165,23 @@ class MainWindow(QMainWindow):
         controls_layout.addRow(apply_res_button)
         # --- End Resolution Controls ---
 
-        self.freq_spinbox = QSpinBox()
-        self.freq_spinbox.setRange(100, 10000)
-        self.freq_spinbox.setValue(self.config.get("camera_settings.capture_frequency_ms", 1000))
-        controls_layout.addRow("拍照频率 (ms):", self._create_spinbox_control(self.freq_spinbox))
+        self.interval_spinbox = QSpinBox()
+        self.interval_spinbox.setRange(100, 60000)
+        self.interval_spinbox.setValue(self.config.get("camera_settings.trigger.software_interval_ms", 1000))
+        self.interval_spinbox.setSuffix(" ms")
+        controls_layout.addRow("软件触发间隔:", self._create_spinbox_control(self.interval_spinbox))
         
         scroll_layout.addWidget(self.controls_group)
 
-        exposure_label_row = QFrame()
-        exposure_label_layout = QHBoxLayout(exposure_label_row)
-        exposure_label_layout.setContentsMargins(0, 0, 0, 0)
-        exposure_label_layout.addWidget(QLabel("相机曝光 (us):"))
-        exposure_label_layout.addStretch()
-        self.auto_exposure_cb = QCheckBox("自动")
-        exposure_label_layout.addWidget(self.auto_exposure_cb)
-        scroll_layout.addWidget(exposure_label_row)
+        scroll_layout.addWidget(QLabel("相机曝光 (us, 固定):"))
 
         self.exposure_spinbox = QSpinBox()
         self.exposure_spinbox.setRange(100, 1000000)
         self.exposure_spinbox.setSingleStep(1000)
+        exp_config = self.config.get("camera_settings.exposure", 10000)
+        self.exposure_spinbox.setValue(int(exp_config) if isinstance(exp_config, (int, float)) else 10000)
         exposure_control = self._create_spinbox_control(self.exposure_spinbox)
         scroll_layout.addWidget(exposure_control)
-
-        exp_config = self.config.get("camera_settings.exposure", "auto")
-        if exp_config == "auto":
-            self.auto_exposure_cb.setChecked(True)
-            self.exposure_spinbox.setValue(5000)
-        else:
-            self.auto_exposure_cb.setChecked(False)
-            self.exposure_spinbox.setValue(int(exp_config))
-        
-        self.auto_exposure_cb.toggled.connect(exposure_control.setDisabled)
-        self.auto_exposure_cb.toggled.connect(self._on_exposure_changed)
-        exposure_control.setDisabled(self.auto_exposure_cb.isChecked())
         self.exposure_spinbox.valueChanged.connect(self._on_exposure_changed)
 
         model_group = QFrame()
@@ -223,14 +218,21 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("停止运行")
         self.stop_button.setObjectName("StopButton")
         self.stop_button.setMinimumHeight(45)
-        
+
+        self.capture_button = QPushButton("拍照（软件触发）")
+        self.capture_button.setObjectName("CaptureButton")
+        self.capture_button.setMinimumHeight(45)
+        self.capture_button.setEnabled(False)  # 仅 software_single 模式启用
+
         self.toggle_camera_button.clicked.connect(self._on_toggle_camera_connection)
         self.start_button.clicked.connect(self._on_start_clicked)
         self.stop_button.clicked.connect(self.controller.stop_system)
+        self.capture_button.clicked.connect(self._on_capture_clicked)
 
         scroll_layout.addWidget(self.toggle_camera_button)
         scroll_layout.addWidget(self.start_button)
         scroll_layout.addWidget(self.stop_button)
+        scroll_layout.addWidget(self.capture_button)
         
         scroll.setWidget(scroll_content)
         main_sidebar_layout.addWidget(scroll)
@@ -273,7 +275,7 @@ class MainWindow(QMainWindow):
         return list_widget
 
     def _on_exposure_changed(self):
-        exposure_value = "auto" if self.auto_exposure_cb.isChecked() else self.exposure_spinbox.value()
+        exposure_value = self.exposure_spinbox.value()
         self.config.set("camera_settings.exposure", exposure_value)
         self.controller.set_camera_exposure(exposure_value)
 
@@ -315,10 +317,26 @@ class MainWindow(QMainWindow):
         self.config.set("model_settings.confidence_threshold", self.confidence_threshold)
         logger.info(f"Confidence threshold set to {self.confidence_threshold}")
 
+    def _on_trigger_mode_changed(self, index):
+        """触发模式切换：记录 config + 通知 controller 配相机 + 管理拍照按钮。"""
+        mode = self._trigger_mode_keys[index]
+        self.config.set("camera_settings.trigger.mode", mode)
+        self.config.set("camera_settings.trigger.debouncer_time_us", self.debouncer_spinbox.value())
+        self.controller.set_trigger_mode(mode)
+        self.capture_button.setEnabled(
+            mode == "software_single" and self.controller.camera.is_connected()
+        )
+        logger.info(f"Trigger mode changed: {mode}")
+
+    def _on_capture_clicked(self):
+        """software_single 模式的拍照按钮。"""
+        self.controller.capture_single()
+
     def _on_start_clicked(self):
-        self.config.set("conveyor_settings.speed_mm_per_s", self.speed_spinbox.value())
-        self.config.set("camera_settings.capture_frequency_ms", self.freq_spinbox.value())
-        self.config.set("camera_settings.exposure", "auto" if self.auto_exposure_cb.isChecked() else self.exposure_spinbox.value())
+        # 同步触发相关参数到 config（worker 启动时读取）
+        self.config.set("camera_settings.trigger.software_interval_ms", self.interval_spinbox.value())
+        self.config.set("camera_settings.trigger.debouncer_time_us", self.debouncer_spinbox.value())
+        self.config.set("camera_settings.exposure", self.exposure_spinbox.value())
         logger.info("System start requested.")
         self.controller.start_system()
 
