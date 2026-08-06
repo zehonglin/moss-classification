@@ -7,6 +7,10 @@ import atexit
 logger = logging.getLogger(__name__)
 
 
+class ConfigError(Exception):
+    """配置读取/解析失败。调用方应显式处理（如弹窗后退出），不得静默回退默认配置。"""
+
+
 class ConfigManager:
     """
     Configuration manager with debounced file writes.
@@ -79,8 +83,11 @@ class ConfigManager:
                 self.config_data = self._merge_configs(self.default_config, self.config_data)
                 logger.info(f"Successfully loaded and merged config from {self.config_filename}")
             except json.JSONDecodeError:
-                logger.error(f"Error decoding JSON from {self.config_filename}. Loading default config.")
-                self.config_data = self.default_config
+                logger.error(f"Error decoding JSON from {self.config_filename}.")
+                raise ConfigError(
+                    f"配置文件损坏，无法解析: {self.config_filename}。"
+                    "请检查文件内容或恢复备份后再启动。"
+                )
             except Exception as e:
                 logger.exception(f"An unexpected error occurred loading config: {e}. Loading default config.")
                 self.config_data = self.default_config
@@ -91,14 +98,22 @@ class ConfigManager:
 
     def _save_now(self):
         """Actually write config to disk."""
+        tmp_path = self.config_filename + ".tmp"
         try:
             os.makedirs(os.path.dirname(self.config_filename), exist_ok=True)
-            with open(self.config_filename, 'w', encoding='utf-8') as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config_data, f, indent=4, ensure_ascii=False)
+            # 原子替换：避免断电/崩溃留下半截 JSON
+            os.replace(tmp_path, self.config_filename)
             self._dirty = False
             logger.debug(f"Config saved to {self.config_filename}")
         except Exception as e:
             logger.exception(f"Error saving config to {self.config_filename}:")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def _schedule_save(self):
         """Schedule a debounced save operation."""

@@ -1,9 +1,9 @@
 import sys
 import os
 import logging
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from app.ui.main_window import MainWindow
-from app.utils.config_manager import ConfigManager
+from app.utils.config_manager import ConfigError, ConfigManager
 from app.utils.logger import setup_logger
 
 def main():
@@ -12,8 +12,13 @@ def main():
 
     app = QApplication(sys.argv)
 
-    # Load Config
-    config_manager = ConfigManager()
+    # Load Config（损坏配置必须显式报错退出，禁止静默回退默认值）
+    try:
+        config_manager = ConfigManager()
+    except ConfigError as e:
+        QMessageBox.critical(None, "配置错误", str(e))
+        logging.error(f"Config error: {e}")
+        sys.exit(1)
 
     # Load and apply stylesheet
     qss_file = "app/ui/style.qss"
