@@ -82,9 +82,11 @@ class SystemWorker(QObject):
             "processed": 0,
             "timeouts": 0,
             "processing_timeout_count": 0,
+            "quality_rejects": 0,
             "total_processing_ms": 0.0,
             "start_time": time.time(),
         }
+        self._consecutive_quality_rejects = 0
         self._processing_timeout_ms = self.config.get("performance.processing_timeout_ms", 3000)
         self._last_perf_alert = 0.0
 
@@ -158,12 +160,43 @@ class SystemWorker(QObject):
                 
                 if image and not self._stop_event.is_set():
                     self.image_ready.emit(image)
-                    
-                    # 2. Predict
-                    predict_start_time = time.time()
-                    prediction, confidence = self.model_service.predict(image)
-                    predict_duration = (time.time() - predict_start_time) * 1000
-                    
+
+                    # 提前转换像素（质量检查与保存复用）
+                    pil_img = _qimage_to_pil(image)
+
+                    # 2. 图像质量检查：拒采帧仍保存原图+缩略图并入库，但不出品级
+                    quality_status = "ok"
+                    quality_reason = None
+                    if self.config.get("quality_check.enabled", True):
+                        from app.services.quality_service import analyze_image
+                        quality_status, quality_reason = analyze_image(
+                            pil_img,
+                            blur_threshold=self.config.get("quality_check.blur_threshold", 50.0),
+                            overexposure_threshold=self.config.get("quality_check.overexposure_threshold", 235.0),
+                            underexposure_threshold=self.config.get("quality_check.underexposure_threshold", 25.0),
+                        )
+                        if quality_status != "ok":
+                            self._consecutive_quality_rejects += 1
+                            self.stats["quality_rejects"] = self.stats.get("quality_rejects", 0) + 1
+                            reject_alert = self.config.get("quality_check.consecutive_reject_alert", 5)
+                            if self._consecutive_quality_rejects >= reject_alert:
+                                self.disk_space_warning.emit(
+                                    f"连续 {self._consecutive_quality_rejects} 帧质量不合格（{quality_reason}），"
+                                    f"请检查补光/镜头/焦距"
+                                )
+                                self._consecutive_quality_rejects = 0
+                        else:
+                            self._consecutive_quality_rejects = 0
+
+                    # 3. Predict（拒采帧跳过推理）
+                    if quality_status == "ok" and not self._stop_event.is_set():
+                        predict_start_time = time.time()
+                        prediction, confidence = self.model_service.predict(image)
+                        predict_duration = (time.time() - predict_start_time) * 1000
+                    else:
+                        prediction, confidence = None, None
+                        predict_duration = 0.0
+
                     if self._stop_event.is_set():
                         break
 
@@ -196,7 +229,6 @@ class SystemWorker(QObject):
                     timestamp_str = now.strftime("%Y%m%d_%H%M%S_%f")
                     img_format = self.config.get("storage.image_format", "png").lower()
                     os.makedirs(save_dir, exist_ok=True)
-                    pil_img = _qimage_to_pil(image)
                     # 原图（训练 / 大图查看）
                     image_path = os.path.join(save_dir, f"moss_{timestamp_str}.{img_format}")
                     if img_format == "png":
@@ -218,7 +250,12 @@ class SystemWorker(QObject):
                     
                     # 5. Save to DB
                     save_db_start_time = time.time()
-                    record_id = self.db_service.add_record(timestamp_iso, image_path, prediction, confidence, thumbnail_path=thumb_path)
+                    record_id = self.db_service.add_record(
+                        timestamp_iso, image_path, prediction, confidence,
+                        thumbnail_path=thumb_path,
+                        quality_status=quality_status,
+                        rejected_reason=quality_reason,
+                    )
                     
                     record_data = {
                         "id": record_id,
@@ -227,7 +264,9 @@ class SystemWorker(QObject):
                         "thumbnail_path": thumb_path,
                         "prediction": prediction,
                         "confidence": confidence,
-                        "corrected_label": None
+                        "corrected_label": None,
+                        "quality_status": quality_status,
+                        "rejected_reason": quality_reason,
                     }
                     self.result_ready.emit(record_data)
                     save_db_duration = (time.time() - save_db_start_time) * 1000
@@ -320,6 +359,7 @@ class SystemWorker(QObject):
             "processed": self.stats["processed"],
             "timeouts": self.stats["timeouts"],
             "processing_timeout_count": self.stats["processing_timeout_count"],
+            "quality_rejects": self.stats["quality_rejects"],
             "per_hour": self.stats["processed"] / elapsed_h,
             "avg_ms": self.stats["total_processing_ms"] / max(self.stats["processed"], 1),
         }
@@ -734,7 +774,10 @@ class SystemController(QObject):
         if not record:
             logger.warning(f"Cannot export correction: record {record_id} not found.")
             return
-        _, timestamp, image_path, original_pred, confidence, _ = record
+        record_id, timestamp, image_path, _thumbnail, original_pred, confidence, _corr, quality_status, _reason = record
+        if quality_status not in (None, "ok"):
+            logger.warning(f"拒采记录不参与纠错导出: record {record_id} (quality={quality_status})")
+            return
         if not image_path or not os.path.exists(image_path):
             logger.warning(f"Cannot export correction: source image not found ({image_path}).")
             return

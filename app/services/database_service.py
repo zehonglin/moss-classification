@@ -92,6 +92,14 @@ class DatabaseService:
             if 'thumbnail_path' not in cols:
                 cursor.execute("ALTER TABLE records ADD COLUMN thumbnail_path TEXT")
                 logger.info("Migrated records table: added thumbnail_path column.")
+
+            # migration: 图像质量状态（拒采帧标记，不产出品级）
+            if 'quality_status' not in cols:
+                cursor.execute("ALTER TABLE records ADD COLUMN quality_status TEXT DEFAULT 'ok'")
+                logger.info("Migrated records table: added quality_status column.")
+            if 'rejected_reason' not in cols:
+                cursor.execute("ALTER TABLE records ADD COLUMN rejected_reason TEXT")
+                logger.info("Migrated records table: added rejected_reason column.")
             
             # Create index for faster queries by timestamp (common query pattern)
             cursor.execute('''
@@ -102,7 +110,8 @@ class DatabaseService:
             conn.commit()
             logger.info("Database schema initialized.")
 
-    def add_record(self, timestamp, image_path, prediction, confidence, thumbnail_path=None) -> int:
+    def add_record(self, timestamp, image_path, prediction, confidence,
+                   thumbnail_path=None, quality_status='ok', rejected_reason=None) -> int:
         """
         Add a new inference record.
         Thread-safe: uses locking for concurrent access.
@@ -115,9 +124,11 @@ class DatabaseService:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
-                    INSERT INTO records (timestamp, image_path, thumbnail_path, prediction, confidence)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (timestamp, str(image_path), str(thumbnail_path) if thumbnail_path else None, prediction, confidence))
+                    INSERT INTO records (timestamp, image_path, thumbnail_path, prediction, confidence,
+                                         quality_status, rejected_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (timestamp, str(image_path), str(thumbnail_path) if thumbnail_path else None,
+                      prediction, confidence, quality_status, rejected_reason))
                 conn.commit()
                 record_id = cursor.lastrowid
                 return record_id
@@ -165,7 +176,8 @@ class DatabaseService:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, timestamp, image_path, thumbnail_path, prediction, confidence, corrected_label
+                    SELECT id, timestamp, image_path, thumbnail_path, prediction, confidence,
+                           corrected_label, quality_status
                     FROM records
                     ORDER BY id DESC
                     LIMIT ?
@@ -183,7 +195,8 @@ class DatabaseService:
                 conn = self._get_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, timestamp, image_path, thumbnail_path, prediction, confidence, corrected_label
+                    SELECT id, timestamp, image_path, thumbnail_path, prediction, confidence,
+                           corrected_label, quality_status, rejected_reason
                     FROM records WHERE id = ?
                 ''', (record_id,))
                 return cursor.fetchone()

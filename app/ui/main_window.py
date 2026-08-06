@@ -390,12 +390,20 @@ class MainWindow(QMainWindow):
 
         self._add_history_record(record_data)  # 列表始终更新（让操作员知道在采）
         # 选中历史项时，结果栏/画面保持在该历史项（不被新记录抢），只更新列表
-        if not self.selected_history_item:
-            self._display_record_info(
-                record_data['id'],
-                record_data['prediction'],
-                record_data['confidence']
-            )
+        if self.selected_history_item:
+            return
+        quality_status = record_data.get("quality_status", "ok")
+        if quality_status not in (None, "ok"):
+            reason = record_data.get("rejected_reason") or quality_status
+            self.result_label.setText(f"⚠️ 质量不合格（未出结果）: {reason}")
+            self.result_label.setStyleSheet("color: #EF5350;")
+            self.correction_button.setEnabled(False)
+            return
+        self._display_record_info(
+            record_data['id'],
+            record_data['prediction'],
+            record_data['confidence']
+        )
 
     def _add_history_record(self, record_data: dict):
         """
@@ -413,7 +421,8 @@ class MainWindow(QMainWindow):
             record_data.get('thumbnail_path'),
             record_data['prediction'],
             record_data['confidence'],
-            record_data['corrected_label']
+            record_data['corrected_label'],
+            record_data.get('quality_status', 'ok'),
         )
         
         # Create item without a parent
@@ -427,7 +436,8 @@ class MainWindow(QMainWindow):
             record_data['prediction'],
             record_data['confidence'],
             record_data['corrected_label'] if record_data['corrected_label'] else "None",
-            confidence_threshold=self.confidence_threshold
+            confidence_threshold=self.confidence_threshold,
+            quality_status=record_data.get('quality_status', 'ok'),
         )
         item.setSizeHint(item_widget.sizeHint())
 
@@ -531,7 +541,8 @@ class MainWindow(QMainWindow):
         avg_ms = stats.get("avg_ms", 0)
         self.stats_label.setText(
             f"已处理 {stats.get('processed', 0)} 张 | ≈{per_hour:.0f} 张/小时 | "
-            f"平均 {avg_ms:.0f}ms | 处理超时 {stats.get('processing_timeout_count', 0)} 次"
+            f"平均 {avg_ms:.0f}ms | 拒采 {stats.get('quality_rejects', 0)} 张 | "
+            f"处理超时 {stats.get('processing_timeout_count', 0)} 次"
         )
 
     def _show_correction_dialog(self):
@@ -575,7 +586,8 @@ class MainWindow(QMainWindow):
                     record_data[4], # prediction
                     record_data[5], # confidence
                     record_data[6],  # new corrected_label
-                    confidence_threshold=self.confidence_threshold
+                    confidence_threshold=self.confidence_threshold,
+                    quality_status=record_data[7] if len(record_data) > 7 else "ok",
                 )
                 item.setSizeHint(new_widget.sizeHint())
                 self.history_list_widget.setItemWidget(item, new_widget)
@@ -594,9 +606,14 @@ class MainWindow(QMainWindow):
             self.selected_history_item = item
             record_data = item.data(Qt.UserRole)
             if record_data:
-                r_id, _, img_path, thumb_path, pred, conf, corr_label = record_data
+                r_id, _, img_path, thumb_path, pred, conf, corr_label, quality = record_data[:8]
                 logger.info(f"History item clicked: Record ID {r_id}, Path: {img_path}")
-                self._display_record_info(r_id, pred, conf, corr_label)
+                if quality not in (None, "ok"):
+                    self.result_label.setText(f"⚠️ 质量不合格（未出结果）: {quality}")
+                    self.result_label.setStyleSheet("color: #EF5350;")
+                    self.correction_button.setEnabled(False)
+                else:
+                    self._display_record_info(r_id, pred, conf, corr_label)
                 pixmap = QPixmap(img_path)
                 if not pixmap.isNull():
                     self.image_feed_label.setPixmap(pixmap.scaled(
@@ -617,7 +634,8 @@ class MainWindow(QMainWindow):
                 record[4], # prediction
                 record[5], # confidence
                 record[6] if record[6] else "None", # corrected_label
-                confidence_threshold=self.confidence_threshold
+                confidence_threshold=self.confidence_threshold,
+                quality_status=record[7] if len(record) > 7 else "ok",
             )
             item.setSizeHint(item_widget.sizeHint())
             self.history_list_widget.addItem(item)

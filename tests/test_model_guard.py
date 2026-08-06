@@ -50,6 +50,7 @@ def test_worker_stops_when_model_unloaded_and_saves_nothing(tmp_path):
                     "driver_type": "mock",
                     "trigger": {"mode": "hardware"},
                 },
+                "quality_check": {"enabled": False},
                 "data_paths": {"collected_data_directory": str(tmp_path / "images")},
             }
         ),

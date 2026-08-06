@@ -16,7 +16,8 @@ class HistoryItemWidget(QWidget):
     # Thumbnail size constant
     THUMBNAIL_SIZE = 60
     
-    def __init__(self, image_path, thumbnail_path, timestamp_str, original_pred, confidence, corrected_label, confidence_threshold=0.6):
+    def __init__(self, image_path, thumbnail_path, timestamp_str, original_pred, confidence,
+                 corrected_label, confidence_threshold=0.6, quality_status="ok"):
         super().__init__()
         
         # Main horizontal layout
@@ -87,16 +88,28 @@ class HistoryItemWidget(QWidget):
         pred_corr_horizontal_layout.setSpacing(8)
 
         # Prediction Label with confidence (Left of Row 2)
-        is_corrected = corrected_label and corrected_label != "None"
-        needs_review = (not is_corrected) and isinstance(confidence, (int, float)) and confidence < confidence_threshold
-        confidence_str = f" ({confidence:.1%})" if isinstance(confidence, (int, float)) else ""
-        prefix = "⚠️ " if needs_review else ""
-        prediction_label = QLabel(f"{prefix}{original_pred}{confidence_str}")
+        quality_map = {
+            "rejected_blur": "模糊",
+            "rejected_overexposed": "过曝",
+            "rejected_underexposed": "欠曝",
+        }
+        rejected = quality_status not in (None, "ok")
+        prediction_label = QLabel("")
         font = prediction_label.font()
         font.setPointSize(14)
         font.setBold(True)
         prediction_label.setFont(font)
-        prediction_label.setStyleSheet("color: #FFA726;" if needs_review else "color: #ECEFF1;")
+        if rejected:
+            label = quality_map.get(quality_status, quality_status)
+            prediction_label.setText(f"⚠️ 质量不合格: {label}")
+            prediction_label.setStyleSheet("color: #EF5350;")
+        else:
+            is_corrected = corrected_label and corrected_label != "None"
+            needs_review = (not is_corrected) and isinstance(confidence, (int, float)) and confidence < confidence_threshold
+            confidence_str = f" ({confidence:.1%})" if isinstance(confidence, (int, float)) else ""
+            prefix = "⚠️ " if needs_review else ""
+            prediction_label.setText(f"{prefix}{original_pred}{confidence_str}")
+            prediction_label.setStyleSheet("color: #FFA726;" if needs_review else "color: #ECEFF1;")
 
         # Correction Label (Right of Row 2)
         correction_label = QLabel("")

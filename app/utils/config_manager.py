@@ -69,6 +69,13 @@ class ConfigManager:
             },
             "performance": {
                 "processing_timeout_ms": 3000
+            },
+            "quality_check": {
+                "enabled": True,
+                "blur_threshold": 50.0,
+                "overexposure_threshold": 235.0,
+                "underexposure_threshold": 25.0,
+                "consecutive_reject_alert": 5
             }
         }
         
