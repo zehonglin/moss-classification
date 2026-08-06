@@ -60,7 +60,11 @@ class ConfigManager:
                 "image_format": "png",
                 "image_quality": 95,
                 "thumbnail_max_size": 300,
-                "retention_days": 60
+                "retention_days": 60,
+                "disk_watermark_gb": 50,
+                "cleanup_min_age_days": 7,
+                "cleanup_interval_hours": 1,
+                "critical_free_gb": 5
             }
         }
         

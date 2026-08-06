@@ -86,8 +86,8 @@ class SystemWorker(QObject):
         
         # Disk space monitor for preventing disk exhaustion
         self._disk_monitor = DiskSpaceMonitor(
-            warning_threshold_gb=10.0,  # Warn at 10GB free
-            critical_threshold_gb=1.0   # Stop at 1GB free
+            warning_threshold_gb=self.config.get("storage.disk_watermark_gb", 50.0),
+            critical_threshold_gb=self.config.get("storage.critical_free_gb", 5.0),
         )
 
     def start_loop(self):
@@ -332,6 +332,10 @@ class SystemController(QObject):
         
         # Services
         self.db_service = DatabaseService(self.config)
+        self._disk_monitor = DiskSpaceMonitor(
+            warning_threshold_gb=self.config.get("storage.disk_watermark_gb", 50.0),
+            critical_threshold_gb=self.config.get("storage.critical_free_gb", 5.0),
+        )
         
         # 直接加载配置指定的本地模型，不再预先下载 EfficientNet（离线环境友好）
         models_dir = self.config.get("model_settings.models_directory", "models/")
@@ -361,9 +365,10 @@ class SystemController(QObject):
         self.worker_thread.started.connect(self.worker.start_loop)
         self.worker.finished.connect(self.worker_thread.quit)
 
-        # 滚动归档：启动时清理一次过期数据 + 每 24h 定时清理
+        # 滚动归档：启动时清理一次过期数据 + 按 storage.cleanup_interval_hours 定时清理
         self.cleanup_timer = QTimer(self)
-        self.cleanup_timer.setInterval(24 * 60 * 60 * 1000)  # 24 小时
+        cleanup_interval_hours = self.config.get("storage.cleanup_interval_hours", 1)
+        self.cleanup_timer.setInterval(int(cleanup_interval_hours * 60 * 60 * 1000))
         self.cleanup_timer.timeout.connect(self._scheduled_cleanup)
         self.cleanup_timer.start()
         self.cleanup_old_records(delete=False)  # 启动只报告，不自动删（防误删旧样本）
@@ -513,31 +518,78 @@ class SystemController(QObject):
         logger.info("Shutdown complete.")
 
     def cleanup_old_records(self, retention_days=None, delete=True):
-        """处理超过保留期的记录。
-        delete=True:  删除记录及原图/缩略图文件（24h 定时清理用）。
-        delete=False: 仅统计并记日志，不删除（启动时用，防止误删旧样本）。"""
+        """处理超过保留期的记录 + 磁盘水位清理（决策 A）。
+
+        delete=True:  删除记录及原图/缩略图文件（定时清理用）。
+        delete=False: 仅统计并记日志，不删除（启动时用，防止误删旧样本）。
+        """
         if retention_days is None:
             retention_days = self.config.get("storage.retention_days", 60)
-        cutoff = (datetime.now() - timedelta(days=retention_days)).isoformat()
+        now = datetime.now()
+        cutoff = (now - timedelta(days=retention_days)).isoformat()
         if not delete:
             n = self.db_service.count_records_before(cutoff)
             if n > 0:
                 logger.info(f"Retention check: {n} 条记录超过 {retention_days}d (cutoff={cutoff})。"
-                            f"不自动删除——由 24h 定时清理或手动触发处理。")
+                            f"不自动删除——由定时清理或手动触发处理。")
             return n, 0
-        deleted = self.db_service.delete_records_before(cutoff)
-        n_files = 0
-        for image_path, thumbnail_path in deleted:
+
+        total_records = total_files = total_bytes = 0
+
+        # 1) 超过保留期的记录无条件删除
+        records, files, freed = self._delete_records_older_than(cutoff)
+        total_records += records
+        total_files += files
+        total_bytes += freed
+
+        # 2) 磁盘水位清理：剩余空间低于水位时，从最旧开始删（保留 min_age 内新数据）
+        min_age_days = self.config.get("storage.cleanup_min_age_days", 7)
+        watermark_gb = self.config.get("storage.disk_watermark_gb", 50)
+        save_dir = self.config.get("data_paths.collected_data_directory", "data/images/")
+        status, free_gb, _ = self._disk_monitor.check_space(save_dir)
+        if status in ("warning", "critical"):
+            water_cutoff = (now - timedelta(days=min_age_days)).isoformat()
+            while status in ("warning", "critical"):
+                records, files, freed = self._delete_records_older_than(water_cutoff)
+                total_records += records
+                total_files += files
+                total_bytes += freed
+                if records == 0:
+                    break
+                status, free_gb, _ = self._disk_monitor.check_space(save_dir)
+
+        if total_records:
+            self.disk_space_warning.emit(
+                f"存储清理: 删除 {total_records} 条记录 / {total_files} 个文件，"
+                f"释放约 {total_bytes / 1e9:.2f}GB"
+            )
+        logger.info(
+            f"Cleanup: removed {total_records} records, {total_files} files, "
+            f"{total_bytes / 1e9:.2f}GB freed "
+            f"(retention={retention_days}d, watermark={watermark_gb}GB, min_age={min_age_days}d)"
+        )
+        return total_records, total_files
+
+    def _delete_records_older_than(self, cutoff_timestamp, limit=500):
+        """先删文件再删 DB 行（DB 删除单事务）；返回 (记录数, 文件数, 释放字节)。"""
+        records = self.db_service.delete_records_before_in_batches(cutoff_timestamp, limit)
+        if not records:
+            return 0, 0, 0
+        removed_files = 0
+        freed_bytes = 0
+        for _rid, image_path, thumbnail_path in records:
             for p in (image_path, thumbnail_path):
-                if p:
-                    try:
-                        if os.path.exists(p):
-                            os.remove(p)
-                            n_files += 1
-                    except OSError as e:
-                        logger.warning(f"Failed to remove file {p}: {e}")
-        logger.info(f"Cleanup: removed {len(deleted)} records, {n_files} files (retention={retention_days}d, cutoff={cutoff})")
-        return len(deleted), n_files
+                if not p:
+                    continue
+                try:
+                    size = os.path.getsize(p) if os.path.exists(p) else 0
+                    os.remove(p)
+                    removed_files += 1
+                    freed_bytes += size
+                except OSError as e:
+                    logger.warning(f"Failed to remove file {p}: {e}")
+        self.db_service.delete_records_by_ids([r[0] for r in records])
+        return len(records), removed_files, freed_bytes
 
     def _scheduled_cleanup(self):
         """定时清理包装，吞掉异常避免影响事件循环。"""

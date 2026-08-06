@@ -218,6 +218,40 @@ class DatabaseService:
                 logger.error(f"Database error in count_records_before: {e}")
                 return 0
 
+    def delete_records_before_in_batches(self, cutoff_timestamp, limit=500):
+        """分页返回 timestamp < cutoff 的记录 (id, image_path, thumbnail_path)。
+
+        供调用方先删文件后按 id 批量删除（DB 删除单事务，避免一次性大事务）。
+        """
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, image_path, thumbnail_path FROM records "
+                    "WHERE timestamp < ? ORDER BY id ASC LIMIT ?",
+                    (cutoff_timestamp, limit),
+                )
+                return cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Database error in delete_records_before_in_batches: {e}")
+                return []
+
+    def delete_records_by_ids(self, ids):
+        """按 id 列表删除记录（单事务）。返回删除行数。"""
+        with self._lock:
+            if not ids:
+                return 0
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.executemany("DELETE FROM records WHERE id = ?", [(i,) for i in ids])
+                conn.commit()
+                return cursor.rowcount
+            except sqlite3.Error as e:
+                logger.error(f"Database error in delete_records_by_ids: {e}")
+                return 0
+
     def delete_records_before(self, cutoff_timestamp):
         """删除 timestamp < cutoff 的记录，返回 [(image_path, thumbnail_path), ...] 供调用方清理文件。
         ISO8601 字符串按字典序比较等价于时间序比较（本项目 timestamp 均为 datetime.isoformat()）。"""
