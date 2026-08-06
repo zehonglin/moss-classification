@@ -499,11 +499,17 @@ class SystemController(QObject):
         logger.info("Shutdown initiated...")
         if self.worker_thread.isRunning():
             self.stop_system()
+            if self.worker_thread.isRunning():
+                # worker 卡死（如 SDK 取帧阻塞）：强行断开相机/关 DB 会与 worker 竞态，
+                # 可能触发 SDK 崩溃。跳过清理，由进程退出兜底（SDK 句柄随进程释放，
+                # SQLite WAL 会自动恢复）。
+                logger.error(
+                    "Worker 未能在超时内停止，跳过相机断开与 DB 关闭（由进程退出兜底）。"
+                )
+                return
         self.disconnect_camera()
-        
         # Close database connection to properly checkpoint WAL
         self.db_service.close()
-        
         logger.info("Shutdown complete.")
 
     def cleanup_old_records(self, retention_days=None, delete=True):
