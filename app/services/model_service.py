@@ -319,21 +319,25 @@ class ModelService:
             if 'top1' in locals(): del top1
             self._cleanup_gpu_memory()
 
+    @staticmethod
+    def _qimage_to_hwc_uint8(q_image: QImage):
+        """QImage(RGB888) → HWC uint8 numpy。按 bytesPerLine 切片去除行尾对齐 padding，
+        避免 bytesPerLine > w*3 时 reshape 错位。"""
+        q = q_image.convertToFormat(QImage.Format.Format_RGB888)
+        w, h = q.width(), q.height()
+        bpl = q.bytesPerLine()
+        buf = np.array(q.bits(), dtype=np.uint8, copy=True)
+        return buf[:h * bpl].reshape(h, bpl)[:, :w * 3].reshape(h, w, 3)
+
     def _qimage_to_tensor(self, q_image: QImage):
         """QImage → torch tensor（.pth 路径）。"""
-        q_image = q_image.convertToFormat(QImage.Format.Format_RGB888)
-        w, h = q_image.width(), q_image.height()
-        ptr = q_image.bits()
-        arr = np.array(ptr).reshape(h, w, 3)
+        arr = self._qimage_to_hwc_uint8(q_image)
         pil_image = Image.fromarray(arr, 'RGB')
         return self.transform(pil_image).unsqueeze(0).to(self.device)
 
     def _qimage_to_nchw(self, q_image: QImage, img_size: int):
         """QImage → NCHW float32 numpy（onnx 输入），不依赖 torch。"""
-        q_image = q_image.convertToFormat(QImage.Format.Format_RGB888)
-        w, h = q_image.width(), q_image.height()
-        ptr = q_image.bits()
-        arr = np.array(ptr).reshape(h, w, 3)
+        arr = self._qimage_to_hwc_uint8(q_image)
         pil = Image.fromarray(arr, 'RGB').resize((img_size, img_size))
         arr = np.array(pil, dtype=np.float32) / 255.0
         arr = (arr - _NORM_MEAN) / _NORM_STD

@@ -203,41 +203,32 @@ class HikvisionCamera(BaseCamera):
             logger.error(f"Software trigger failed! ret=0x{ret:x}")
 
     def set_resolution(self, width: int, height: int):
-        """Sets the camera resolution. This requires stopping and restarting the stream."""
+        """改分辨率。改完重新获取 PayloadSize + 重建转换缓冲区；
+        启动失败不自动 disconnect（避免状态更乱），抛异常让上层决定。"""
         if not self.b_is_connected:
             logger.warning("Cannot set resolution, camera is not connected.")
             return
 
         logger.info(f"Attempting to set resolution to {width}x{height}...")
+        self.handle.MV_CC_StopGrabbing()  # 停流（忽略返回，继续尝试改宽高）
 
-        # Stop grabbing before changing resolution
-        ret = self.handle.MV_CC_StopGrabbing()
-        if ret != 0:
-            logger.error(f"Failed to stop grabbing before setting resolution! ret=0x{ret:x}")
-            # Attempt to continue, but this may fail
-        
-        # Set Width
         ret_w = self.handle.MV_CC_SetIntValue("Width", width)
-        if ret_w != 0:
-            logger.error(f"Failed to set camera width to {width}! ret=0x{ret_w:x}")
-
-        # Set Height
         ret_h = self.handle.MV_CC_SetIntValue("Height", height)
-        if ret_h != 0:
-            logger.error(f"Failed to set camera height to {height}! ret=0x{ret_h:x}")
-        
-        # Restart grabbing
+        if ret_w != 0 or ret_h != 0:
+            logger.error(f"Set resolution failed: ret_w=0x{ret_w:x} ret_h=0x{ret_h:x}")
+
         ret_start = self.handle.MV_CC_StartGrabbing()
         if ret_start != 0:
-            logger.error(f"Failed to restart grabbing after setting resolution! ret=0x{ret_start:x}")
-            # This is a critical failure, the camera might be in a bad state
-            self.disconnect() # Try to reset
-            raise Exception("Failed to restart camera stream after resolution change.")
-        
-        if ret_w == 0 and ret_h == 0:
-            logger.info(f"Successfully set resolution to {width}x{height} and restarted stream.")
-        else:
-            logger.warning("Resolution change may have failed. Check previous error logs.")
+            # 不自动 disconnect（b_is_connected/缓冲状态会更不可预期），抛异常让上层处理
+            raise RuntimeError(f"分辨率切换后重启取流失败 ret=0x{ret_start:x}（建议断开重连相机）")
+
+        # 成功：重新获取 PayloadSize + 重建转换缓冲区（尺寸可能变了）
+        stParam = MVCC_INTVALUE()
+        memset(ctypes.byref(stParam), 0, ctypes.sizeof(MVCC_INTVALUE))
+        if self.handle.MV_CC_GetIntValue("PayloadSize", stParam) == 0:
+            self.n_payload_size = stParam.nCurValue
+        self._ensure_buffers(width, height)
+        logger.info(f"Successfully set resolution to {width}x{height}, PayloadSize refreshed.")
 
 
     def set_timeout(self, timeout_ms: int):

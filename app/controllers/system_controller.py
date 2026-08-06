@@ -200,7 +200,7 @@ class SystemWorker(QObject):
                 # 节拍：software_continuous 按 sw_interval；hardware 无 sleep（由光电触发决定）
                 total_processing_time = (time.time() - loop_start_time) * 1000
                 if image:
-                    logger.info(
+                    logger.debug(
                         f"Loop Profile: Capture={capture_duration:.2f}ms, Predict={predict_duration:.2f}ms, "
                         f"SaveImg={save_img_duration:.2f}ms, SaveDB={save_db_duration:.2f}ms | "
                         f"Total={total_processing_time:.2f}ms (trigger={mode})"

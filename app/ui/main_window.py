@@ -361,12 +361,14 @@ class MainWindow(QMainWindow):
 
     def _update_result_display(self, record_data: dict):
         """Receives a new record and updates the UI incrementally."""
-        self._display_record_info(
-            record_data['id'],
-            record_data['prediction'],
-            record_data['confidence']
-        )
-        self._add_history_record(record_data)
+        self._add_history_record(record_data)  # 列表始终更新（让操作员知道在采）
+        # 选中历史项时，结果栏/画面保持在该历史项（不被新记录抢），只更新列表
+        if not self.selected_history_item:
+            self._display_record_info(
+                record_data['id'],
+                record_data['prediction'],
+                record_data['confidence']
+            )
 
     def _add_history_record(self, record_data: dict):
         """
@@ -376,10 +378,6 @@ class MainWindow(QMainWindow):
         - Explicitly deletes old items and their widgets when trimming
         - Limits list to 50 items to prevent unbounded growth
         """
-        # If an item is selected in the history, don't add new items to the list
-        if self.selected_history_item:
-            return
-
         # Convert dict to the tuple format used elsewhere
         record_tuple = (
             record_data['id'],
@@ -495,19 +493,27 @@ class MainWindow(QMainWindow):
         self.result_label.setStyleSheet("color: #FFA726;")  # 橙色警告
 
     def _show_correction_dialog(self):
-        logger.info("Correction dialog initiated.")
+        """纠错。优先针对当前查看的历史项（selected），无选中则用最近一条（last）。"""
+        target_id, target_pred = self.last_record_id, self.last_prediction
+        if self.selected_history_item:
+            data = self.selected_history_item.data(Qt.UserRole)
+            if data and data[0] is not None:
+                target_id = data[0]      # id
+                target_pred = data[4]    # prediction
+
+        logger.info(f"Correction dialog initiated for record {target_id}.")
         self.controller.stop_system()
-        
-        corrected_label, ok = QInputDialog.getText(self, "纠错", f"当前识别为 '{self.last_prediction}'.\n请输入正确类别:", QLineEdit.Normal, "")
+        corrected_label, ok = QInputDialog.getText(
+            self, "纠错", f"当前识别为 '{target_pred}'.\n请输入正确类别:", QLineEdit.Normal, "")
         if ok and corrected_label:
-            logger.info(f"Submitting correction for record {self.last_record_id}: new label is '{corrected_label}'")
-            self.controller.correct_prediction(self.last_record_id, corrected_label)
-            self._update_history_item(self.last_record_id, corrected_label)
-            self._display_record_info(self.last_record_id, self.last_prediction, 0, corrected_label)
+            logger.info(f"Submitting correction for record {target_id}: '{corrected_label}'")
+            self.controller.correct_prediction(target_id, corrected_label)
+            self._update_history_item(target_id, corrected_label)
+            self._display_record_info(target_id, target_pred, 0, corrected_label)
         else:
             logger.info("Correction dialog cancelled.")
-            # If user cancels, we should re-enable start
-            self.start_button.setEnabled(True)
+            # 取消：恢复靠状态机（stop_system 已切回预览），不手动设按钮
+            self._update_status(self.status)
 
     def _update_history_item(self, record_id, corrected_label):
         """Finds a history item by ID and updates its corrected label."""
