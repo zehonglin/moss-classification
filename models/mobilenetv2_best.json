@@ -1,6 +1,11 @@
-[
-  "一级",
-  "二级",
-  "三级",
-  "四级"
-]
+{
+  "architecture": "mobilenet",
+  "classes": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "img_size": 99,
+  "num_classes": 4
+}

@@ -1,14 +1,15 @@
-# 苔藓识别系统 - 运行依赖
-# Python 3.11（开发环境: conda env TaiXian, CUDA 12.8, NVIDIA GPU）
+# 苔藓识别系统 - 运行依赖（Python 3.11）
 #
-# ⚠ torch / torchvision 带 +cu128 后缀，必须先单独从 PyTorch 官方源安装：
-#   pip install torch==2.9.1+cu128 torchvision==0.24.1+cu128 \
-#       --index-url https://download.pytorch.org/whl/cu128
-#
-# 然后安装其余依赖:
+# 【产线部署 · 推荐】用 ONNX 推理，只需下面这些包，无需 torch/timm（部署瘦身）：
 #   pip install -r requirements.txt
+#   模型用 .onnx：python converter/export_onnx.py models/xxx.pth
+#   config.json 的 model_settings.current_model_name 改成 xxx.onnx
+#
+# 【开发 / 训练 / 导出】额外需要 torch/torchvision/timm，导出还需 onnx：
+#   pip install torch==2.9.1+cu128 torchvision==0.24.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+#   pip install timm onnx   # onnx 仅 .pth→.onnx 导出时需要
 
 PySide6==6.9.3
-timm==1.0.22
 Pillow==12.0.0
 numpy==2.3.5
+onnxruntime==1.28.0
