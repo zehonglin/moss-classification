@@ -66,6 +66,9 @@ class ConfigManager:
                 "cleanup_min_age_days": 7,
                 "cleanup_interval_hours": 1,
                 "critical_free_gb": 5
+            },
+            "performance": {
+                "processing_timeout_ms": 3000
             }
         }
         

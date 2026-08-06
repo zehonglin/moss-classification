@@ -34,6 +34,7 @@ class MainWindow(QMainWindow):
         self.controller.disk_space_warning.connect(self._handle_disk_warning)
         self.controller.model_loaded.connect(self._on_model_loaded)
         self.controller.camera_info.connect(self._show_camera_info)
+        self.controller.stats_updated.connect(self._update_stats_label)
 
         self._init_ui()
         self._load_history()
@@ -271,6 +272,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.result_label, 1) # Give label stretch priority
         layout.addWidget(self.correction_button)
         container_layout.addWidget(self.result_panel)
+        self.stats_label = QLabel("")
+        self.stats_label.setObjectName("StatsLabel")
+        self.stats_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        self.stats_label.setWordWrap(True)
+        container_layout.addWidget(self.stats_label)
         return container_layout
 
     def _create_image_feed_area(self):
@@ -518,6 +524,15 @@ class MainWindow(QMainWindow):
         """相机连接信息（序列号/型号）。"""
         logger.info(f"Camera info: {message}")
         self.result_label.setText(message)
+
+    def _update_stats_label(self, stats: dict):
+        """更新实时吞吐/耗时/超时统计。"""
+        per_hour = stats.get("per_hour", 0)
+        avg_ms = stats.get("avg_ms", 0)
+        self.stats_label.setText(
+            f"已处理 {stats.get('processed', 0)} 张 | ≈{per_hour:.0f} 张/小时 | "
+            f"平均 {avg_ms:.0f}ms | 处理超时 {stats.get('processing_timeout_count', 0)} 次"
+        )
 
     def _show_correction_dialog(self):
         """纠错。优先针对当前查看的历史项（selected），无选中则用最近一条（last）。

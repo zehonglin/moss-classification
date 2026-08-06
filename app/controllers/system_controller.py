@@ -77,6 +77,17 @@ class SystemWorker(QObject):
         # 必须加锁，避免 SDK 并发调用导致缓冲区错乱或崩溃
         self._camera_lock = camera_lock if camera_lock is not None else threading.Lock()
 
+        # 节拍/吞吐统计
+        self.stats = {
+            "processed": 0,
+            "timeouts": 0,
+            "processing_timeout_count": 0,
+            "total_processing_ms": 0.0,
+            "start_time": time.time(),
+        }
+        self._processing_timeout_ms = self.config.get("performance.processing_timeout_ms", 3000)
+        self._last_perf_alert = 0.0
+
         # Thread-safe stop event (replaces _is_running boolean)
         # Event is thread-safe: set(), clear(), is_set() are atomic
         self._stop_event = threading.Event()
@@ -137,6 +148,7 @@ class SystemWorker(QObject):
                 # 由操作员看告警检查现场，托盘/相机恢复后 worker 自动继续处理。
                 if not image and not self._stop_event.is_set():
                     consecutive_none += 1
+                    self.stats["timeouts"] += 1
                     if consecutive_none >= MAX_CONSECUTIVE_NONE:
                         self.disk_space_warning.emit(
                             f"相机连续 {MAX_CONSECUTIVE_NONE * grab_timeout / 1000:.0f}s 无图像，请检查相机/光电/产线")
@@ -223,10 +235,21 @@ class SystemWorker(QObject):
                     # Successful frame - reset error counter
                     consecutive_errors = 0
 
-                # 节拍：software_continuous 按 sw_interval；hardware 无 sleep（由光电触发决定）
-                total_processing_time = (time.time() - loop_start_time) * 1000
-                if image:
-                    logger.debug(
+                    # 节拍：software_continuous 按 sw_interval；hardware 无 sleep（由光电触发决定）
+                    total_processing_time = (time.time() - loop_start_time) * 1000
+                    if image:
+                        self.stats["processed"] += 1
+                        self.stats["total_processing_ms"] += total_processing_time
+                        if total_processing_time > self._processing_timeout_ms:
+                            self.stats["processing_timeout_count"] += 1
+                            now = time.time()
+                            if now - self._last_perf_alert > 60:
+                                self._last_perf_alert = now
+                                self.disk_space_warning.emit(
+                                    f"单帧处理耗时 {total_processing_time:.0f}ms 超过阈值 "
+                                    f"{self._processing_timeout_ms}ms，请检查推理/存储性能"
+                                )
+                        logger.debug(
                         f"Loop Profile: Capture={capture_duration:.2f}ms, Predict={predict_duration:.2f}ms, "
                         f"SaveImg={save_img_duration:.2f}ms, SaveDB={save_db_duration:.2f}ms | "
                         f"Total={total_processing_time:.2f}ms (trigger={mode})"
@@ -290,6 +313,17 @@ class SystemWorker(QObject):
         self.finished.emit()
         logger.info("Processing loop finished.")
 
+    def get_stats(self) -> dict:
+        """返回吞吐统计（每小时托盘数、平均处理耗时、超时次数等）。"""
+        elapsed_h = max((time.time() - self.stats["start_time"]) / 3600.0, 1e-6)
+        return {
+            "processed": self.stats["processed"],
+            "timeouts": self.stats["timeouts"],
+            "processing_timeout_count": self.stats["processing_timeout_count"],
+            "per_hour": self.stats["processed"] / elapsed_h,
+            "avg_ms": self.stats["total_processing_ms"] / max(self.stats["processed"], 1),
+        }
+
     def stop_loop(self):
         """
         Signal the processing loop to stop.
@@ -326,6 +360,7 @@ class SystemController(QObject):
     disk_space_warning = Signal(str)  # Forwarded from worker
     model_loaded = Signal(bool, str)  # 模型后台加载完成（成功否, 模型名）
     camera_info = Signal(str)  # 相机连接信息（序列号/型号），供 UI 显示
+    stats_updated = Signal(dict)  # 吞吐/超时统计，定时推给 UI
 
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
@@ -380,6 +415,15 @@ class SystemController(QObject):
         self.reconnect_timer.setInterval(10 * 1000)
         self.reconnect_timer.timeout.connect(self._try_reconnect)
         self.reconnect_timer.start()
+
+        # 吞吐统计定时推送（2s）
+        self.stats_timer = QTimer(self)
+        self.stats_timer.setInterval(2000)
+        self.stats_timer.timeout.connect(self._emit_stats)
+        self.stats_timer.start()
+
+    def _emit_stats(self):
+        self.stats_updated.emit(self.worker.get_stats())
 
     def _initialize_hardware(self):
         driver_type = self.config.get("camera_settings.driver_type", "hikvision")

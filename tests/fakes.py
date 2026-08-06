@@ -21,6 +21,7 @@ class FakeController(QObject):
     disk_space_warning = Signal(str)
     model_loaded = Signal(bool, str)
     camera_info = Signal(str)
+    stats_updated = Signal(dict)
 
     def __init__(self, connected=False):
         super().__init__()
