@@ -1,4 +1,4 @@
-# 苔藓识别系统 - 运行依赖（Python 3.11）
+# 苔藓识别系统 - 运行依赖（Python 3.11 / 3.12）
 #
 # 【产线部署 · 推荐】用 ONNX 推理，只需下面这些包，无需 torch/timm（部署瘦身）：
 #   pip install -r requirements.txt

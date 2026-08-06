@@ -2,6 +2,23 @@
 
 基于深度学习的工业级苔藓品级识别桌面应用。工业相机采集托盘图像，MobileNetV2 分类苔藓覆盖度品级（A/B/C/D），支持光电传感器硬件触发、ONNX 产线部署、滚动归档、置信度拒识与纠错闭环。
 
+> 项目目录名 "苔藓识别-gemini cli" 为早期使用 Gemini CLI 协作时的遗留命名；当前系统不依赖任何 Gemini/云端模型，识别完全在本地完成。
+
+## 生产约束（2026-08 确认）
+
+- 节拍：1000–1500 托盘/天（约 3s/托盘）
+- 无 PLC/传送带联动需求（保留驱动层扩展接口，见 `app/core/interfaces.py`）
+- 部署机无 GPU：推理走 onnxruntime CPU（实测约 32ms/帧，含 2048² 转换）
+- 单台 USB3 工业相机；512GB 系统盘；相机按 `camera_serial` 序列号选择
+- 品级 = 整图人工目视覆盖度（A/B/C/D）
+- 原图 PNG 无损保存；存储策略为容量水位自适应（见"存储策略"）
+
+## 存储策略（决策 A：容量水位自适应）
+
+原图 PNG 无损保存，名义保留 60 天；磁盘剩余低于 50GB 时从最旧开始清理（保留最近 7 天的数据不清理），低于 5GB 时停止采集。实际可保留天数受 512GB 硬盘限制（实测 2048² PNG 平均约 10.5MB/张，1000–1500 张/天 ≈ 10–16GB/天）。
+
+配置键（`config/config.json` → `storage`）：`retention_days` / `disk_watermark_gb` / `cleanup_min_age_days` / `cleanup_interval_hours` / `critical_free_gb`。
+
 ## 业务
 
 - **品级**：A / B / C / D，依据健康苔藓覆盖度（A 铺满 → D 几乎无覆盖）
@@ -78,6 +95,13 @@ python -c "from app.services.model_service import ModelService; import time; fro
 ```
 
 若平均耗时超过 500ms/帧：检查 onnxruntime provider、CPU 是否降频、是否有杀毒软件实时扫描干扰。
+
+## 测试
+
+```bash
+# TaiXian conda 环境（Python 3.11，含 PySide6/onnxruntime/torch/pytest）
+python -m pytest
+```
 
 ## 训练 / 评估 / 导出
 

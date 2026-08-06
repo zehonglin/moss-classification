@@ -54,3 +54,27 @@ class BaseCamera(ABC):
     def enable_software_trigger(self):
         """发一次软件触发（software_single / software_continuous 模式用）。"""
         pass
+
+
+class InterlockController(ABC):
+    """产线联动扩展接口（预留，当前不实现任何硬件逻辑）。
+
+    若未来需要与 PLC/传送带联动（到位确认、忙信号、不合格剔除、故障停机），
+    实现本接口并在 SystemController 中注入；具体硬件协议（Modbus/IO/串口等）
+    由实现方负责。接口签名仅供规划，可按实际协议调整。
+    """
+
+    @abstractmethod
+    def wait_tray_ready(self, timeout_ms: int) -> bool:
+        """等待托盘到位确认。返回是否在超时内到位。"""
+        pass
+
+    @abstractmethod
+    def set_busy(self, busy: bool):
+        """向产线输出忙信号（软件处理中禁止进料）。"""
+        pass
+
+    @abstractmethod
+    def reject_tray(self, reason: str):
+        """输出不合格剔除信号（可选，按现场工艺决定）。"""
+        pass
