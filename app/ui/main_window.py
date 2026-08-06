@@ -504,7 +504,10 @@ class MainWindow(QMainWindow):
         self.result_label.setStyleSheet("color: #FFA726;")  # 橙色警告
 
     def _show_correction_dialog(self):
-        """纠错。优先针对当前查看的历史项（selected），无选中则用最近一条（last）。"""
+        """纠错。优先针对当前查看的历史项（selected），无选中则用最近一条（last）。
+
+        纠错不得中断产线采集：不调用 stop_system，直接后台更新 DB 并刷新界面。
+        """
         target_id, target_pred = self.last_record_id, self.last_prediction
         if self.selected_history_item:
             data = self.selected_history_item.data(Qt.UserRole)
@@ -513,7 +516,6 @@ class MainWindow(QMainWindow):
                 target_pred = data[4]    # prediction
 
         logger.info(f"Correction dialog initiated for record {target_id}.")
-        self.controller.stop_system()
         corrected_label, ok = QInputDialog.getText(
             self, "纠错", f"当前识别为 '{target_pred}'.\n请输入正确类别:", QLineEdit.Normal, "")
         if ok and corrected_label:
@@ -521,10 +523,9 @@ class MainWindow(QMainWindow):
             self.controller.correct_prediction(target_id, corrected_label)
             self._update_history_item(target_id, corrected_label)
             self._display_record_info(target_id, target_pred, 0, corrected_label)
+            self.result_label.setText(f"已提交纠错: {target_pred} → {corrected_label}")
         else:
-            logger.info("Correction dialog cancelled.")
-            # 取消：恢复靠状态机（stop_system 已切回预览），不手动设按钮
-            self._update_status(self.status)
+            logger.info("Correction dialog cancelled. 采集状态不变。")
 
     def _update_history_item(self, record_id, corrected_label):
         """Finds a history item by ID and updates its corrected label."""
