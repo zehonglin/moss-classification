@@ -417,6 +417,7 @@ class SystemController(QObject):
     model_loaded = Signal(bool, str)  # 模型后台加载完成（成功否, 模型名）
     camera_info = Signal(str)  # 相机连接信息（序列号/型号），供 UI 显示
     stats_updated = Signal(dict)  # 吞吐/超时统计，定时推给 UI
+    grade_summary_updated = Signal(dict)  # 品级累计统计，定时推给 UI
 
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
@@ -480,8 +481,24 @@ class SystemController(QObject):
         self.stats_timer.timeout.connect(self._emit_stats)
         self.stats_timer.start()
 
+        # 品级累计统计定时推送（2s）
+        self.grade_summary_timer = QTimer(self)
+        self.grade_summary_timer.setInterval(2000)
+        self.grade_summary_timer.timeout.connect(self._emit_grade_summary)
+        self.grade_summary_timer.start()
+
     def _emit_stats(self):
         self.stats_updated.emit(self.worker.get_stats())
+
+    def get_grade_summary(self) -> dict:
+        """累计品级统计（透传 DB 聚合）：A/B/C/D 计数 + 纠错数 + 拒采数。"""
+        return self.db_service.count_by_final_grade()
+
+    def _emit_grade_summary(self):
+        try:
+            self.grade_summary_updated.emit(self.get_grade_summary())
+        except Exception as e:
+            logger.warning(f"grade summary emit failed: {e}")
 
     def _initialize_hardware(self):
         driver_type = self.config.get("camera_settings.driver_type", "hikvision")
@@ -619,6 +636,10 @@ class SystemController(QObject):
     def shutdown(self):
         """Cleanly shuts down all components."""
         logger.info("Shutdown initiated...")
+        # 先停品级统计 timer：避免 db 关闭后 timer 触发 _emit_grade_summary →
+        # count_by_final_grade 访问已关闭的 DB 句柄（虽然 _emit_grade_summary 有
+        # try/except 兜底，显式 stop 更稳妥，且保持与 shutdown 清理顺序一致）。
+        self.grade_summary_timer.stop()
         if self.worker_thread.isRunning():
             self.stop_system()
             if self.worker_thread.isRunning():
