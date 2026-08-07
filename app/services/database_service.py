@@ -230,7 +230,7 @@ class DatabaseService:
 
         Args:
             prediction: 品级筛选；None=不过滤。
-            quality_status: 质量状态精确匹配；None=不过滤。
+            quality_status: None/"all"=不过滤, "ok"=正常, "rejected"=拒采(!= 'ok'), 其他=精确值
             page: 页码，从 1 起。
             page_size: 每页行数。
 
@@ -248,7 +248,9 @@ class DatabaseService:
                 if prediction:
                     where.append("prediction = ?")
                     params.append(prediction)
-                if quality_status:
+                if quality_status == "rejected":
+                    where.append("quality_status != 'ok'")
+                elif quality_status and quality_status != "all":
                     where.append("quality_status = ?")
                     params.append(quality_status)
                 clause = ("WHERE " + " AND ".join(where)) if where else ""
