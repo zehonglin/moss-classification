@@ -37,15 +37,11 @@ data/*.db
 data/*.db-journal
 data/*.sqlite*
 
-# 模型权重（保留 *.json 元数据）
-models/*.pth
+# 模型权重入库：.pth(开发) / .onnx(产线) / .json(sidecar) 均纳入版本管理
+# 仅忽略无关格式与下载缓存
 models/*.pt
-models/*.onnx
 models/*.bin
 models/*.safetensors
-# ONNX sidecar（export_onnx.py 生成）
-models/*.json
-# 模型下载缓存
 models/hub/
 models/xet/
 

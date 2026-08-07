@@ -50,15 +50,19 @@ def train(arch, img_size, batch_size, epochs, lr, data_root, output_path, num_wo
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"架构: {arch} | 设备: {device} | img_size: {img_size}")
 
+    # 覆盖度任务：覆盖率是整图全局属性，任何裁剪都会改变可见苔藓比例 → 扭曲标签。
+    # 故不用 RandomResizedCrop（会把 C 的密集块裁成"A 铺满"，制造 C→A 跨级误判），
+    # 改为整图 + 翻转/轻旋转/颜色 + RandomErasing（逼模型看全局，防"密集块捷径"）。
     train_t = transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.RandomResizedCrop(img_size, scale=(0.7, 1.0)),
+        transforms.Resize((img_size, img_size)),                       # 整图，保留覆盖率信号
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(25),
+        transforms.RandomVerticalFlip(p=0.5),                          # 覆盖率与上下/左右方向无关
+        transforms.RandomRotation(15),                                  # 减小角度，降低黑边占比
         transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.08),
         transforms.RandomGrayscale(p=0.05),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),          # 强制全局视野，防密集块捷径
     ])
 
     val_t = transforms.Compose([

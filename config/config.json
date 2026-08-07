@@ -1,6 +1,6 @@
 {
     "model_settings": {
-        "current_model_name": "mobilenetv2_best.pth",
+        "current_model_name": "mobilenetv2_best.onnx",
         "models_directory": "models/",
         "confidence_threshold": 0.6
     },
