@@ -37,6 +37,10 @@ class _Toast(QFrame):
         super().__init__()
         self.setObjectName("Toast")
         self.setProperty("severity", severity)
+        # _remove 守卫标志：× 与 QTimer 到期两条路径都会调 _remove，
+        # 先到的路径置 True，后到的路径短路返回，避免在已 deleteLater 的
+        # C++ 对象上 removeWidget 引发 RuntimeError。
+        self._removed = False
 
         v = QVBoxLayout(self)
         v.setContentsMargins(11, 9, 11, 9)
@@ -107,7 +111,15 @@ class ToastStack(QFrame):
         return toast
 
     def _remove(self, toast):
-        """移除并销毁一条 toast（× 关闭 / 定时器到期 共用）。"""
+        """移除并销毁一条 toast（× 关闭 / 定时器到期 共用）。
+
+        幂等守卫：× 与 QTimer.singleShot 可能竞态调用本方法。第一条路径
+        置 `toast._removed=True` 并完成 removeWidget + deleteLater；第二条
+        路径直接短路返回，避免对已销毁的 C++ 对象操作引发 RuntimeError。
+        """
+        if getattr(toast, "_removed", False):
+            return
+        toast._removed = True
         self._lay.removeWidget(toast)
         toast.deleteLater()
 
