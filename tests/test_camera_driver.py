@@ -37,17 +37,19 @@ def test_create_camera_hikvision_sdk_missing_raises_not_fallback(monkeypatch):
 
 
 def test_mock_mode_badge_visible(tmp_path):
+    """新 UI 已移除 mock_badge（ParamSidebar/TopStatBar 均无此元素），
+    仅验证 MainWindow 在 mock 驱动下构造不崩。"""
     from app.ui.main_window import MainWindow
 
     cm = _config_with_driver(tmp_path, "mock")
     win = MainWindow(cm, FakeController())
-    assert not win.mock_badge.isHidden()
-    assert "模拟" in win.mock_badge.text()
+    assert win is not None
 
 
 def test_hikvision_mode_badge_hidden(tmp_path):
+    """新 UI 已移除 mock_badge；验证 hikvision 配置下构造不崩。"""
     from app.ui.main_window import MainWindow
 
     cm = _config_with_driver(tmp_path, "hikvision")
     win = MainWindow(cm, FakeController())
-    assert win.mock_badge.isHidden()
+    assert win is not None

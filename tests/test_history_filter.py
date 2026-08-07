@@ -64,6 +64,7 @@ def test_export_csv_writes_parseable(tmp_path):
 
 
 def test_history_filter_reloads_list(tmp_path):
+    """新 UI（v2）：HistoryList → _on_filter → controller.search_records_paged → set_page。"""
     from app.ui.main_window import MainWindow
 
     from tests.fakes import FakeController
@@ -71,11 +72,13 @@ def test_history_filter_reloads_list(tmp_path):
     cfg = tmp_path / "config.json"
     cfg.write_text('{"camera_settings": {"driver_type": "mock"}}', encoding="utf-8")
     ctrl = FakeController()
-    ctrl.filtered = [(1, "2026-08-01T00:00:00", "x.png", None, "A", 0.9, None, "ok")]
+    ctrl.paged_rows = [{"id": 1, "timestamp": "2026-08-01T00:00:00", "image_path": "x.png",
+                        "thumbnail_path": None, "prediction": "A", "confidence": 0.9,
+                        "corrected_label": None, "quality_status": "ok"}]
+    ctrl.paged_total = 1
     win = MainWindow(ConfigManager(str(cfg)), ctrl)
 
-    win.history_pred_combo.setCurrentText("A")
-    win._on_history_filter_clicked()
+    win._on_filter({"prediction": "A", "quality_status": None})
 
-    assert win.history_list_widget.count() == 1
-    assert ctrl.last_filter == {"prediction": "A", "quality_status": None}
+    assert win.history._list.count() == 1
+    assert ctrl.last_paged == {"prediction": "A", "quality_status": None, "page": 1}

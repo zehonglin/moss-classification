@@ -861,6 +861,15 @@ class SystemController(QObject):
             limit=limit,
         )
 
+    def search_records_paged(self, prediction=None, quality_status=None, page=1, page_size=50):
+        """分页检索（供 HistoryList 分页浏览）。透传 DatabaseService.search_records_paged。"""
+        return self.db_service.search_records_paged(
+            prediction=prediction,
+            quality_status=quality_status,
+            page=page,
+            page_size=page_size,
+        )
+
     def export_history_csv(self, filepath, rows):
         """导出历史记录为 CSV。"""
         n = export_records_csv(filepath, rows)

@@ -47,7 +47,12 @@ def test_worker_get_stats_computes_rate_and_avg(tmp_path):
     assert s["processing_timeout_count"] == 1
 
 
-def test_stats_label_updates(tmp_path):
+def test_grade_summary_updates_top_bar(tmp_path):
+    """新版 MainWindow 由 grade_summary_updated 驱动 top_bar（取代旧 stats_label）。
+
+    stats_updated（吞吐/超时统计）在新 UI 中不在顶部栏显示；产量由 grade_summary
+    承载。此测试验证 grade_summary_updated → top_bar 的接线。
+    """
     from app.ui.main_window import MainWindow
 
     from tests.fakes import FakeController
@@ -56,14 +61,8 @@ def test_stats_label_updates(tmp_path):
     cfg.write_text('{"camera_settings": {"driver_type": "mock"}}', encoding="utf-8")
     ctrl = FakeController()
     win = MainWindow(ConfigManager(str(cfg)), ctrl)
-    ctrl.stats_updated.emit(
-        {
-            "processed": 12,
-            "per_hour": 240.0,
-            "avg_ms": 35.0,
-            "timeouts": 0,
-            "processing_timeout_count": 0,
-        }
+    ctrl.grade_summary_updated.emit(
+        {"A": 12, "B": 3, "C": 0, "D": 0, "corrected": 1, "rejected": 2}
     )
-    assert "12" in win.stats_label.text()
-    assert "240" in win.stats_label.text()
+    assert "12" in win.top_bar._stats["A"].text()
+    assert "3" in win.top_bar._stats["B"].text()

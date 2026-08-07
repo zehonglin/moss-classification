@@ -52,11 +52,13 @@ def test_worker_error_restores_preview_trigger(tmp_path):
 
 
 def test_ui_error_keeps_connection_state(tmp_path):
+    """新 UI（v2）：可恢复错误 → toast 显示，但 _status 不变（不重置为 IDLE）。"""
     win = _make_window(tmp_path)
-    win._update_status(STATUS_PREVIEWING)
-    assert win.status == STATUS_PREVIEWING
+    win._on_status(STATUS_PREVIEWING)
+    assert win._status == STATUS_PREVIEWING
 
-    win._handle_error("some recoverable error")
+    win._on_error("some recoverable error")
 
-    assert win.status == STATUS_PREVIEWING, "可恢复错误不应把状态重置为 IDLE"
-    assert "错误" in win.result_label.text()
+    assert win._status == STATUS_PREVIEWING, "可恢复错误不应把状态重置为 IDLE"
+    # 新 UI 错误走 ToastStack（不再有 result_label）；验证 toast 被创建
+    assert win.toasts.count() == 1

@@ -61,6 +61,7 @@ def test_worker_rejected_frame_saved_and_db_marked(tmp_path):
 
 
 def test_ui_rejected_record_shows_red_and_disables_correction(tmp_path):
+    """新 UI（v2）：拒采记录 → banner grade="rejected" + 纠错按钮不可见 + 进历史列表。"""
     from app.ui.main_window import MainWindow
 
     cfg = tmp_path / "config.json"
@@ -68,7 +69,7 @@ def test_ui_rejected_record_shows_red_and_disables_correction(tmp_path):
     ctrl = FakeController()
     win = MainWindow(ConfigManager(str(cfg)), ctrl)
 
-    win._update_result_display(
+    win._on_result(
         {
             "id": 1,
             "timestamp": "2026-08-06T00:00:00",
@@ -82,6 +83,7 @@ def test_ui_rejected_record_shows_red_and_disables_correction(tmp_path):
         }
     )
 
-    assert win.history_list_widget.count() == 1
-    assert not win.correction_button.isEnabled(), "拒采记录不应允许纠错"
-    assert "质量不合格" in win.result_label.text()
+    assert win.history._list.count() == 1
+    # offscreen Qt 用 isHidden() 不用 isVisible()
+    assert win.banner._edit.isHidden(), "拒采记录不应允许纠错"
+    assert win.banner.property("grade") == "rejected"
