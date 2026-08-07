@@ -409,3 +409,110 @@ def test_list_has_historylist_object_name():
     """QListWidget objectName=HistoryList 命中 style.qss。"""
     hl = HistoryList()
     assert hl._list.objectName() == "HistoryList"
+
+
+# ---------- set_page 翻页清选中（I1 回归） + 回收 widget（I2） ----------
+
+def test_set_page_clears_selection_on_page_change():
+    """I1: set_page 翻页清空 _selected（避免悬空指向已销毁 item）。"""
+    hl = HistoryList()
+    hl.set_page([_rec(1)], 1, 1, 50)
+    hl._on_item_selected(_rec(1))  # 进入选中态
+    assert hl._selected is not None
+    hl.set_page([_rec(i) for i in range(5)], 5, 2, 50)  # 翻页
+    assert hl._selected is None
+    assert hl._pending == 0
+    assert hl._pause_hint.isHidden()
+
+
+def test_set_page_clears_selection_then_append_live_inserts():
+    """I1 回归：翻页清选中后 append_live 走实时插入而非永远缓冲。"""
+    hl = HistoryList()
+    hl.set_page([_rec(1)], 1, 1, 50)
+    hl._on_item_selected(_rec(1))  # 选中态
+    hl.append_live(_rec(2))  # 缓冲
+    assert hl._pending == 1
+    hl.set_page([_rec(i) for i in range(3)], 3, 2, 50)  # 翻页清选中
+    assert hl._selected is None
+    before = hl._list.count()
+    hl.append_live(_rec(9))  # 应直接插入而非缓冲
+    assert hl._list.count() == before + 1
+    assert hl._pending == 0
+
+
+def test_set_page_releases_old_item_widgets():
+    """I2: set_page 翻页显式 deleteLater 旧 item widget（避免内存泄漏）。"""
+    from shiboken6 import isValid
+    hl = HistoryList()
+    hl.set_page([_rec(i) for i in range(3)], 3, 1, 50)
+    old_widgets = [hl._list.itemWidget(hl._list.item(i)) for i in range(3)]
+    assert all(isValid(w) for w in old_widgets)
+    hl.set_page([_rec(i) for i in range(2)], 2, 2, 50)  # 翻页
+    # flush DeferredDelete（deleteLater 投递的事件需 sendPostedEvents 显式处理）
+    from PySide6.QtCore import QCoreApplication, QEvent
+    for _ in range(10):
+        QCoreApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    # 旧 widget 的 C++ 对象应被回收
+    assert all(not isValid(w) for w in old_widgets)
+
+
+# ---------- _apply_thumb widget 销毁守卫（C1 回归） ----------
+
+def test_apply_thumb_silent_on_deleted_widget():
+    """C1: widget C++ 对象已销毁时 _apply_thumb 静默返回，不抛 RuntimeError。
+
+    复现崩溃路径：翻页/筛选 `_list.clear()` 删旧 item/widget → loader 线程仍在跑 →
+    回调 `_apply_thumb(widget, pm)` 填已删 QLabel → `RuntimeError: Internal C++
+    object (QLabel) already deleted`。守卫 shiboken.isValid 应阻断此路径。
+    """
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt as _Qt
+    from PySide6.QtGui import QPixmap
+    from shiboken6 import isValid
+    from app.ui.components.history_list import _apply_thumb
+
+    item = HistoryItem(_rec(1), threshold=0.6)  # 无 thumbnail_path → 不启 loader
+    pm = QPixmap(10, 10)
+    pm.fill(_Qt.red)
+
+    # 健康路径：widget 存活时正常填 pixmap
+    _apply_thumb(item, pm)
+
+    # 销毁 widget C++ 对象（flush DeferredDelete）
+    item.deleteLater()
+    for _ in range(10):
+        QCoreApplication.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert not isValid(item), "setup 失败：widget C++ 对象未销毁"
+
+    # 关键断言：widget 已销毁 → 静默返回，不抛 RuntimeError
+    _apply_thumb(item, pm)
+
+
+def test_thumb_loader_callback_survives_page_clear(tmp_path):
+    """C1 集成：带缩略图的 HistoryItem 启 loader → set_page 清掉它 →
+    loader 线程回调时不应崩 RuntimeError。
+
+    用真实 loader 路径 + 翻页 clear，验证 _apply_thumb 守卫端到端有效。
+    """
+    from PySide6.QtCore import QCoreApplication
+    img_path = tmp_path / "thumb.png"
+    img_path.write_bytes(_png_bytes())
+    rec = _rec(1)
+    rec["thumbnail_path"] = str(img_path)
+
+    hl = HistoryList()
+    hl.set_page([rec], 1, 1, 50)  # 渲染含缩略图的 item（启动 loader）
+    item_widget = hl._list.itemWidget(hl._list.item(0))
+    loaders = list(item_widget._loaders)
+
+    # 翻页：set_page 会 deleteLater 旧 item widget + _list.clear()
+    hl.set_page([_rec(i) for i in range(3)], 3, 2, 50)
+
+    # 等 loader 线程跑完 + flush queued 信号（_apply_thumb 此时被调用）
+    for l in loaders:
+        l.wait(3000)
+    for _ in range(20):
+        QCoreApplication.processEvents()
+    # 走到这里没抛 RuntimeError 即通过
+    assert hl._list.count() == 3

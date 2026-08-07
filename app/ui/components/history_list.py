@@ -33,6 +33,7 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QImageReader, QPixmap
+from shiboken6 import isValid as _shiboken_is_valid
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -94,8 +95,13 @@ class _ThumbLoader(QThread):
 
 
 def _apply_thumb(widget, pm):
-    """`_ThumbLoader.loaded` 信号回调：填进 QLabel（空 pixmap 不动）。"""
-    if not pm.isNull():
+    """`_ThumbLoader.loaded` 信号回调：填进 QLabel（空 pixmap 不动）。
+
+    守卫：widget 的 C++ 对象已被销毁时（翻页/筛选 `_list.clear()` 删旧 item 后，
+    loader 线程仍可能回调到已删 QLabel）静默返回，避免
+    `RuntimeError: Internal C++ object (QLabel) already deleted`。
+    """
+    if not pm.isNull() and _shiboken_is_valid(widget):
         widget._thumb.setPixmap(pm)
 
 
@@ -296,6 +302,18 @@ class HistoryList(QFrame):
             page_size: 每页大小（用于算总页数）。
         """
         self._page = page
+        # 翻页/筛选语义：选中项可能不在新页 → 清选中；pending 是上一页缓冲 → 清掉。
+        # 必须在 _list.clear() 之前重置，否则 _selected 会悬空指向已销毁的 item，
+        # 导致 `_selected is not None` 恒真 → append_live 永远缓冲、实时流失效。
+        self._selected = None
+        self._pending = 0
+        self._pause_hint.hide()
+        # 显式回收 item widget：QListWidget.clear() 只删 QListWidgetItem，
+        # item widget 不会随之销毁 → 每翻页泄漏 N 个 HistoryItem。
+        for i in range(self._list.count()):
+            w = self._list.itemWidget(self._list.item(i))
+            if w is not None:
+                w.deleteLater()
         self._list.clear()
         for r in rows:
             rec = r if isinstance(r, dict) else self._row_to_dict(r)
