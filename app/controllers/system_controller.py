@@ -867,6 +867,39 @@ class SystemController(QObject):
         logger.info(f"Exported {n} records to {filepath}")
         return n
 
+    def export_with_images(self, csv_path, image_root, rows, group_by="grade"):
+        """导出 CSV（复用 export_records_csv）+ 按 group_by 分组复制原图。
+
+        - group_by='grade': 组 = COALESCE(corrected_label, prediction)（最终品级，
+          与 count_by_final_grade 一致）。
+        - group_by='status': 组 = quality_status（'ok' 或具体拒采原因）。
+
+        组名做路径非法字符清理（操作员标签兜底），空则 'unknown'。
+        目标文件名: <record_id>_<原预测>.png；图片不存在/复制失败：log warning 跳过。
+        返回记录数（= len(rows)，与 CSV 行数一致）。
+        """
+        n = export_records_csv(csv_path, rows)
+        for r in rows:
+            # 列序与 export_records_csv 表头一致；末列 rejected_reason 可选
+            rid, _ts, image_path, _thumb, pred, _conf, corr, quality, *_ = r
+            if not image_path or not os.path.exists(image_path):
+                continue
+            if group_by == "status":
+                group = quality if quality and quality != "ok" else "ok"
+            else:
+                group = corr or pred or "unknown"
+            safe = re.sub(r'[<>:"/\\|?*]', '_', str(group)).strip() or "unknown"
+            d = os.path.join(image_root, safe)
+            os.makedirs(d, exist_ok=True)
+            # 文件名中的原预测也需清理非法字符（防 / 等破坏路径）
+            safe_pred = re.sub(r'[<>:"/\\|?*]', '_', str(pred)).strip() or "unknown"
+            dst = os.path.join(d, f"{rid}_{safe_pred}.png")
+            try:
+                shutil.copy(image_path, dst)
+            except OSError as e:
+                logger.warning(f"copy image failed {image_path}: {e}")
+        return n
+
     def _handle_error(self, message):
         """
         可恢复错误：仅记录并通知 UI，不触发停机。
