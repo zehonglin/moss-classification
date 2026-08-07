@@ -255,6 +255,44 @@ class DatabaseService:
                 logger.error(f"Database error in get_record_count: {e}")
                 return 0
 
+    def count_by_final_grade(self) -> dict:
+        """按最终品级(corrected_label 优先于 prediction)聚合统计 + 纠错数 + 不合格数。
+
+        Returns:
+            ``{"A": int, "B": int, "C": int, "D": int, "corrected": int, "rejected": int}``
+            - 品级 A/B/C/D：仅统计 ``quality_status = 'ok'`` 或 NULL 的记录，
+              品级取 ``COALESCE(corrected_label, prediction)``（已纠正者按新值计）。
+            - corrected：``corrected_label`` 非空且非空串的记录数。
+            - rejected：``quality_status`` 非空且不为 ``'ok'`` 的记录数（不计入品级）。
+        """
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COALESCE(corrected_label, prediction) AS g, COUNT(*) "
+                    "FROM records "
+                    "WHERE quality_status = 'ok' OR quality_status IS NULL "
+                    "GROUP BY g"
+                )
+                grades = {"A": 0, "B": 0, "C": 0, "D": 0}
+                for g, n in cursor.fetchall():
+                    if g in grades:
+                        grades[g] = n
+                corrected = cursor.execute(
+                    "SELECT COUNT(*) FROM records "
+                    "WHERE corrected_label IS NOT NULL AND corrected_label != ''"
+                ).fetchone()[0]
+                rejected = cursor.execute(
+                    "SELECT COUNT(*) FROM records "
+                    "WHERE quality_status IS NOT NULL AND quality_status != 'ok'"
+                ).fetchone()[0]
+                return {**grades, "corrected": corrected, "rejected": rejected}
+            except sqlite3.Error as e:
+                logger.error(f"Database error in count_by_final_grade: {e}")
+                return {"A": 0, "B": 0, "C": 0, "D": 0,
+                        "corrected": 0, "rejected": 0}
+
     def count_records_before(self, cutoff_timestamp):
         """统计 timestamp < cutoff 的记录数（用于启动时只报告不删除）。"""
         with self._lock:
