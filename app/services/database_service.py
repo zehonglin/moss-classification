@@ -224,6 +224,51 @@ class DatabaseService:
                 logger.error(f"Database error in search_records: {e}")
                 return []
 
+    def search_records_paged(self, prediction=None, quality_status=None,
+                             page: int = 1, page_size: int = 50) -> tuple[list, int]:
+        """按品级/质量状态筛选并分页返回记录（供 HistoryList 分页浏览）。
+
+        Args:
+            prediction: 品级筛选；None=不过滤。
+            quality_status: 质量状态精确匹配；None=不过滤。
+            page: 页码，从 1 起。
+            page_size: 每页行数。
+
+        Returns:
+            ``(rows, total)``：rows 列顺序与 ``get_recent_records`` 一致
+            ``(id, timestamp, image_path, thumbnail_path, prediction, confidence,
+               corrected_label, quality_status)``；total 是匹配 WHERE 条件的总数
+            （非整表总数）。page<1 视作 1。
+        """
+        with self._lock:
+            try:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                where, params = [], []
+                if prediction:
+                    where.append("prediction = ?")
+                    params.append(prediction)
+                if quality_status:
+                    where.append("quality_status = ?")
+                    params.append(quality_status)
+                clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+                total = cursor.execute(
+                    f"SELECT COUNT(*) FROM records {clause}", params
+                ).fetchone()[0]
+
+                offset = max(page - 1, 0) * page_size
+                rows = cursor.execute(
+                    "SELECT id, timestamp, image_path, thumbnail_path, prediction, "
+                    f"confidence, corrected_label, quality_status FROM records {clause} "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    params + [page_size, offset],
+                ).fetchall()
+                return rows, total
+            except sqlite3.Error as e:
+                logger.error(f"Database error in search_records_paged: {e}")
+                return [], 0
+
     def get_record(self, record_id: int):
         """按 id 查单条记录。返回 (id, timestamp, image_path, prediction, confidence, corrected_label) 或 None。"""
         with self._lock:
