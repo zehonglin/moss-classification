@@ -60,3 +60,6 @@ logs/*.log.*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ===== Superpowers（brainstorm mockup / SDD ledger，工具产物）=====
+.superpowers/
