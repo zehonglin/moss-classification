@@ -95,6 +95,7 @@ class FakeCam:
     def __init__(self):
         self.connected = False
         self.reconnect_calls = 0
+        self.reconnect_fails = False
         self.device_serial = "SN-X"
         self.device_model = "M"
 
@@ -103,6 +104,8 @@ class FakeCam:
 
     def reconnect(self):
         self.reconnect_calls += 1
+        if self.reconnect_fails:
+            raise RuntimeError("reconnect failed (no device)")
         self.connected = True
 
     def disconnect(self):
@@ -127,10 +130,24 @@ def test_reconnect_timer_is_active(tmp_path):
         ctrl.shutdown()
 
 
+def test_try_reconnect_skipped_when_never_connected(tmp_path):
+    """从未成功连接过 → _try_reconnect 不应尝试重连（避免启动后空转刷屏）。"""
+    ctrl = _make_controller(tmp_path)
+    cam = FakeCam()  # connected=False，但有 reconnect()
+    ctrl.camera = cam
+    try:
+        ctrl._try_reconnect()
+        assert cam.reconnect_calls == 0
+    finally:
+        ctrl.shutdown()
+
+
 def test_try_reconnect_recovers_and_notifies(tmp_path):
+    """曾成功连接后掉线 → _try_reconnect 恢复并通知。"""
     ctrl = _make_controller(tmp_path)
     cam = FakeCam()
     ctrl.camera = cam
+    ctrl._was_connected = True  # 模拟"连上过再掉线"
     infos = []
     ctrl.camera_info.connect(infos.append)
     try:
@@ -138,5 +155,46 @@ def test_try_reconnect_recovers_and_notifies(tmp_path):
         assert cam.connected
         assert cam.reconnect_calls == 1
         assert infos and "重连" in infos[0]
+    finally:
+        ctrl.shutdown()
+
+
+def test_disconnect_disarms_auto_reconnect(tmp_path):
+    """用户主动断开后，_try_reconnect 不应再尝试重连（避免违背用户意图自动回连）。"""
+    ctrl = _make_controller(tmp_path)
+    cam = FakeCam()
+    ctrl.camera = cam
+    ctrl._was_connected = True  # 模拟之前连上过
+    try:
+        ctrl.disconnect_camera()
+        assert ctrl._was_connected is False
+        ctrl._try_reconnect()
+        assert cam.reconnect_calls == 0  # 断开后不再重连
+    finally:
+        ctrl.shutdown()
+
+
+def test_reconnect_gives_up_after_max_attempts(tmp_path):
+    """连续重连失败达上限(10)后：停止重连 + 主动断开（_was_connected 复位）。"""
+    from app.controllers.system_controller import SystemController
+
+    max_attempts = SystemController.MAX_RECONNECT_ATTEMPTS
+    ctrl = _make_controller(tmp_path)
+    cam = FakeCam()
+    cam.reconnect_fails = True
+    ctrl.camera = cam
+    ctrl._was_connected = True
+    warns = []
+    ctrl.disk_space_warning.connect(warns.append)
+    try:
+        for _ in range(max_attempts):
+            ctrl._try_reconnect()
+        assert cam.reconnect_calls == max_attempts
+        assert ctrl._was_connected is False  # 放弃 → 解除自动重连
+        # 超过上限后不再尝试
+        ctrl._try_reconnect()
+        assert cam.reconnect_calls == max_attempts
+        # 给用户一条"已停止"的通知
+        assert any("已停止" in w for w in warns)
     finally:
         ctrl.shutdown()

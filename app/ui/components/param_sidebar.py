@@ -165,6 +165,26 @@ class ParamSidebar(QFrame):
         self._over.setValue(over)
         self._under.setValue(under)
 
+    def set_resolution(self, width: int, height: int):
+        """填充分辨率宽高初值（由上层从 camera_settings.* config 注入）。
+
+        不触发 resolution_apply（仅"应用"按钮 emit），故启动注入不会重复下发硬件。
+        """
+        self._w.setValue(width)
+        self._h.setValue(height)
+
+    def set_exposure(self, value: int):
+        """填充固定曝光初值。setValue 同值无害（同其他参数初始化模式）。"""
+        self._exposure.setValue(value)
+
+    def set_debouncer(self, value: int):
+        """填充触发防抖初值。"""
+        self._debouncer.setValue(value)
+
+    def set_interval(self, value: int):
+        """填充软件间隔初值（仅 software_continuous 时该行可见）。"""
+        self._interval.setValue(value)
+
     def set_buttons_running(self, running: bool):
         """操作按钮禁用状态机：运行中 → 开始禁用/停止可用；已停止 → 反之。"""
         self._b_start.setEnabled(not running)

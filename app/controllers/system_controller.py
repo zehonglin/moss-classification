@@ -416,6 +416,7 @@ class ModelLoadWorker(QThread):
 
 class SystemController(QObject):
     """Main controller for the application."""
+    MAX_RECONNECT_ATTEMPTS = 10  # 连续重连失败上限，达到后放弃并主动断开
     image_updated = Signal(QImage)
     result_updated = Signal(dict)
     status_updated = Signal(str)
@@ -477,6 +478,7 @@ class SystemController(QObject):
 
         # 相机断线自动重连（每 10s 检查一次；成功恢复触发配置与预览）
         self._reconnect_attempts = 0
+        self._was_connected = False  # 仅在成功 connect 后置 True；未连过不自动重连
         self.reconnect_timer = QTimer(self)
         self.reconnect_timer.setInterval(10 * 1000)
         self.reconnect_timer.timeout.connect(self._try_reconnect)
@@ -566,6 +568,7 @@ class SystemController(QObject):
         try:
             logger.info("Connecting to camera...")
             self.camera.connect()
+            self._was_connected = True  # 标记曾成功连接，掉线后才启用自动重连
             
             # Apply initial exposure settings
             self.set_camera_exposure(self.config.get("camera_settings.exposure"))
@@ -594,6 +597,9 @@ class SystemController(QObject):
         self.preview_timer.stop()
         if self.camera.is_connected():
             self.camera.disconnect()
+        # 主动断开 → 解除自动重连并复位计数（避免违背用户意图自动回连）
+        self._was_connected = False
+        self._reconnect_attempts = 0
         self.status_updated.emit(STATUS_IDLE)
         logger.info("Camera disconnected.")
 
@@ -756,12 +762,14 @@ class SystemController(QObject):
                 self._handle_error(f"Failed to set exposure: {e}")
 
     def set_camera_resolution(self, width, height):
+        # config 无条件持久化（对齐 set_camera_exposure 口径）；硬件仅在连接时下发。
+        # 历史 bug：config.set 曾在 is_connected() 守卫内，未连接时改分辨率不落盘。
+        self.config.set("camera_settings.resolution_width", width)
+        self.config.set("camera_settings.resolution_height", height)
         if self.camera and self.camera.is_connected():
             try:
                 self.camera.set_resolution(width, height)
-                self.config.set("camera_settings.resolution_width", width)
-                self.config.set("camera_settings.resolution_height", height)
-                logger.info(f"Set camera resolution to {width}x{height} and updated config.")
+                logger.info(f"Set camera resolution to {width}x{height}.")
             except Exception as e:
                 self._handle_error(f"Failed to set resolution: {e}")
 
@@ -776,6 +784,8 @@ class SystemController(QObject):
 
     def _try_reconnect(self):
         """相机未连接时尝试自动重连（定时调用）。"""
+        if not self._was_connected:
+            return  # 从未成功连接过 → 不自动重连（避免启动后未连相机空转刷屏）
         if self.camera.is_connected():
             self._reconnect_attempts = 0
             return
@@ -805,8 +815,19 @@ class SystemController(QObject):
             logger.info("相机重连成功。")
         except Exception as e:
             self._reconnect_attempts += 1
-            logger.warning(f"相机重连失败 (attempt {self._reconnect_attempts}): {e}")
-            if self._reconnect_attempts % 6 == 1:
+            logger.warning(
+                f"相机重连失败 (第 {self._reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS} 次): {e}"
+            )
+            if self._reconnect_attempts >= self.MAX_RECONNECT_ATTEMPTS:
+                logger.error(
+                    f"重连已达 {self.MAX_RECONNECT_ATTEMPTS} 次上限，放弃重连并主动断开。"
+                )
+                self.disconnect_camera()  # 主动断开 + 复位 _was_connected/_reconnect_attempts
+                self.disk_space_warning.emit(
+                    f"相机连续 {self.MAX_RECONNECT_ATTEMPTS} 次重连失败，已停止重连。"
+                    "请检查相机连接后重新点击\"连接\"。"
+                )
+            elif self._reconnect_attempts % 6 == 1:
                 self.disk_space_warning.emit(
                     f"相机重连失败，请检查相机连接（已尝试 {self._reconnect_attempts} 次）"
                 )

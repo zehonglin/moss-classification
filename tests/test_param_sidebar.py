@@ -244,3 +244,31 @@ def test_all_eleven_signals_defined():
     ]
     for name in expected:
         assert hasattr(ParamSidebar, name), f"缺信号 {name}"
+
+
+# ---------- 初值注入 setter（_populate_sidebar_defaults 调用，避免输入框停在区间下限） ----------
+
+def test_set_resolution_sets_width_and_height():
+    """set_resolution 注入宽高，替代直访 _w/_h.setValue。"""
+    sb = ParamSidebar()
+    sb.set_resolution(2048, 1536)
+    assert sb._w.value() == 2048
+    assert sb._h.value() == 1536
+
+
+def test_set_exposure_sets_value():
+    sb = ParamSidebar()
+    sb.set_exposure(10000)
+    assert sb._exposure.value() == 10000
+
+
+def test_set_debouncer_sets_value():
+    sb = ParamSidebar()
+    sb.set_debouncer(5000)
+    assert sb._debouncer.value() == 5000
+
+
+def test_set_interval_sets_value():
+    sb = ParamSidebar()
+    sb.set_interval(1000)
+    assert sb._interval.value() == 1000
