@@ -170,8 +170,9 @@ class MainWindow(QMainWindow):
             self._body_l.addWidget(row, 1)
 
             # 底栏操作按钮（主次分级 + 防误触布局）：
-            #   [连接相机][连接状态] …… [拍照] │ [停止运行] [开始运行]
+            #   [连接相机][连接状态] …… │ [停止运行] [开始运行]
             # 开始/停止之间用竖分隔线拉开物理距离；开始为主操作（QSS 放大实心绿）。
+            # 注：拍照（软件触发）仅保留在工程师参数栏（调试用，不存库）；操作员走传感器触发不需要。
             bot = QWidget()
             bh = QHBoxLayout(bot)
             bh.setContentsMargins(12, 8, 12, 8)
@@ -189,12 +190,6 @@ class MainWindow(QMainWindow):
             bh.addWidget(self._conn_state)
 
             bh.addStretch()
-
-            b_cap = QPushButton("拍照")
-            b_cap.setObjectName("ActionCapture")
-            b_cap.clicked.connect(self._do_capture)
-            bh.addWidget(b_cap)
-            self._bot_btns["capture"] = b_cap
 
             sep = QFrame()
             sep.setObjectName("BotSep")
@@ -300,6 +295,19 @@ class MainWindow(QMainWindow):
             self.config.get("quality_check.blur_threshold", 50.0),
             int(self.config.get("quality_check.overexposure_threshold", 235)),
             int(self.config.get("quality_check.underexposure_threshold", 25)),
+        )
+        # 相机参数初值（QSpinBox 默认停在区间下限，必须显式注入 config 值，
+        # 否则分辨率会显示 256、曝光 100 等，与 config 不符）
+        self.sidebar.set_resolution(
+            self.config.get("camera_settings.resolution_width", 2048),
+            self.config.get("camera_settings.resolution_height", 2048),
+        )
+        self.sidebar.set_exposure(self.config.get("camera_settings.exposure", 10000))
+        self.sidebar.set_debouncer(
+            self.config.get("camera_settings.trigger.debouncer_time_us", 5000)
+        )
+        self.sidebar.set_interval(
+            self.config.get("camera_settings.trigger.software_interval_ms", 1000)
         )
         # 触发模式（联动软件间隔行可见性）
         cur_mode = self.config.get("camera_settings.trigger.mode", "preview")
@@ -543,9 +551,6 @@ class MainWindow(QMainWindow):
 
     def _do_stop(self):
         self.controller.stop_system()
-
-    def _do_capture(self):
-        self.controller.capture_single()
 
     # ================================================================
     # 键盘 / 全屏

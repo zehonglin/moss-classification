@@ -22,7 +22,7 @@ def test_missing_config_creates_defaults(tmp_path):
     data = json.loads(cfg.read_text(encoding="utf-8"))
     assert data["camera_settings"]["exposure"] == 10000
     assert "model_settings" in data
-    assert cm.get("camera_settings.trigger.mode") == "preview"
+    assert cm.get("camera_settings.trigger.mode") == "hardware"
 
 
 def test_partial_config_merges_with_defaults(tmp_path):

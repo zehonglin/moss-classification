@@ -113,19 +113,19 @@ def test_switch_mode_to_engineer_without_password(tmp_path):
 
 
 def test_operator_mode_has_bottom_buttons(tmp_path):
-    """操作员模式 → 底栏含连接/开始/停止/拍照 4 个 _do_* 方法可调用。"""
+    """操作员模式 → 底栏含连接/开始/停止 3 个 _do_* 方法可调用（拍照仅工程师栏）。"""
     win, _ = _win(tmp_path)
-    # 底栏按钮通过 _do_* 方法接线；验证 4 个方法都存在且可调用
-    for method in ("_do_connect", "_do_start", "_do_stop", "_do_capture"):
+    # 底栏按钮通过 _do_* 方法接线；验证 3 个方法都存在且可调用
+    for method in ("_do_connect", "_do_start", "_do_stop"):
         assert callable(getattr(win, method, None))
     # 验证底栏容器存在（body layout 最后一个 item 是底栏）
     last_item = win._body_l.itemAt(win._body_l.count() - 1)
     assert last_item is not None
     bot_widget = last_item.widget()
     assert bot_widget is not None
-    # 底栏内应有 4 个 QPushButton
+    # 底栏内应有 3 个 QPushButton（连接/停止/开始）
     btns = [b for b in bot_widget.findChildren(QPushButton)]
-    assert len(btns) == 4
+    assert len(btns) == 3
 
 
 # ---- final review fix 覆盖 ----

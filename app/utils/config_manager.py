@@ -39,7 +39,7 @@ class ConfigManager:
                 "resolution_height": 2048,
                 "exposure": 10000,
                 "trigger": {
-                    "mode": "preview",
+                    "mode": "hardware",
                     "source": "Line0",
                     "activation": "RisingEdge",
                     "debouncer_time_us": 5000,
