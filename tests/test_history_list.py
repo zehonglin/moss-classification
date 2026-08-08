@@ -235,7 +235,7 @@ def test_filter_with_rejected_status():
     hl = HistoryList()
     received = []
     hl.filter_requested.connect(lambda d: received.append(d))
-    hl._f_q.setCurrentText("拒采")
+    hl._f_q.setCurrentText("质量异常")
     hl._emit_filter()
     assert received[-1]["quality_status"] == "rejected"
 
@@ -267,10 +267,10 @@ def test_export_button_label():
 # ---------- HistoryItem：状态色 ----------
 
 def test_item_low_confidence_orange():
-    """置信度 < threshold 且未纠错 → 橙色 ⚠ 文本。"""
+    """置信度 < threshold 且未纠错 → 橙色 ⚠ 文本（v3：#c2410c）。"""
     item = HistoryItem(_rec(1, conf=0.3), threshold=0.6)
     pred_label = item.layout().itemAt(1).layout().itemAt(0).widget()
-    assert "#d97706" in pred_label.styleSheet()
+    assert "#c2410c" in pred_label.styleSheet()
     assert "⚠" in pred_label.text()
 
 
@@ -278,7 +278,7 @@ def test_item_normal_confidence_grade_color():
     """置信度 ≥ threshold → 品级色字。"""
     item = HistoryItem(_rec(1, pred="A", conf=0.9), threshold=0.6)
     pred_label = item.layout().itemAt(1).layout().itemAt(0).widget()
-    assert "#16a34a" in pred_label.styleSheet()  # A 绿
+    assert "#15803d" in pred_label.styleSheet()  # A 绿（700 深度）
     assert "⚠" not in pred_label.text()
 
 
@@ -292,11 +292,12 @@ def test_item_corrected_has_green_tag():
 
 
 def test_item_rejected_red_text():
-    """quality_status != 'ok' → 红字"⚠ 质量不合格"。"""
+    """quality_status != 'ok' → "⚠ 图像质量不合格 · {翻译后原因}"（正常入库语义，非拒采）。"""
     item = HistoryItem(_rec(1, q="rejected_blur"), threshold=0.6)
     pred_label = item.layout().itemAt(1).layout().itemAt(0).widget()
-    assert "#dc2626" in pred_label.styleSheet()
-    assert "不合格" in pred_label.text() or "拒采" in pred_label.text()
+    assert "#475569" in pred_label.styleSheet()
+    assert "图像质量不合格" in pred_label.text()
+    assert "图像模糊" in pred_label.text()  # rejected_blur 已翻译，不显示原始枚举
 
 
 def test_item_corrected_overrides_low_confidence_review():
@@ -304,7 +305,7 @@ def test_item_corrected_overrides_low_confidence_review():
     item = HistoryItem(_rec(1, conf=0.3, corr="B"), threshold=0.6)
     pred_label = item.layout().itemAt(1).layout().itemAt(0).widget()
     # corr 存在 → review=False → 用品级色字而非橙色
-    assert "#d97706" not in pred_label.styleSheet()
+    assert "#c2410c" not in pred_label.styleSheet()
 
 
 # ---------- _row_to_dict：tuple→dict 归一 ----------

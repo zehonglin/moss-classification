@@ -18,7 +18,9 @@ import logging
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -123,6 +125,19 @@ class MainWindow(QMainWindow):
     # 布局：双模式组装
     # ================================================================
 
+    def _banner_wrap(self):
+        """横幅外层留白容器：圆角卡片与窗口边缘留出呼吸感（对齐 mockup .banner-wrap）。
+
+        该容器是"中间容器"——模式切换时随 _apply_mode_layout 释放；
+        banner 本体在清空前已 setParent(None) 脱钩，不受影响。
+        """
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(16, 12, 16, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self.banner)
+        return wrap
+
     def _apply_mode_layout(self):
         """按当前 _mode 重排 body 区。共享组件不销毁，中间容器释放。
 
@@ -141,41 +156,66 @@ class MainWindow(QMainWindow):
                 child.deleteLater()
 
         if self._mode == "operator":
-            # 横幅
-            self._body_l.addWidget(self.banner)
+            # 横幅（圆角卡片 + 外层留白）
+            self._body_l.addWidget(self._banner_wrap())
 
-            # 中间区：取景器(3) + 历史(2)
+            # 中间区：取景器(3) + 历史(2)。
+            # 边距与横幅卡片左右对齐（16px 侧距），卡片间 16px 间隔（对齐 mockup .mid）
             row = QWidget()
             rh = QHBoxLayout(row)
-            rh.setContentsMargins(0, 0, 0, 0)
-            rh.setSpacing(0)
+            rh.setContentsMargins(16, 12, 16, 12)
+            rh.setSpacing(16)
             rh.addWidget(self.camera, 3)
             rh.addWidget(self.history, 2)
             self._body_l.addWidget(row, 1)
 
-            # 底栏操作按钮
+            # 底栏操作按钮（主次分级 + 防误触布局）：
+            #   [连接相机][连接状态] …… [拍照] │ [停止运行] [开始运行]
+            # 开始/停止之间用竖分隔线拉开物理距离；开始为主操作（QSS 放大实心绿）。
             bot = QWidget()
             bh = QHBoxLayout(bot)
             bh.setContentsMargins(12, 8, 12, 8)
-            for obj_name, sig in [
-                ("ActionConnect", "connect"),
-                ("ActionStart", "start"),
-                ("ActionStop", "stop"),
-                ("ActionCapture", "capture"),
-            ]:
-                b = QPushButton(
-                    {
-                        "connect": "连接相机",
-                        "start": "开始运行",
-                        "stop": "停止运行",
-                        "capture": "拍照",
-                    }[sig]
-                )
-                b.setObjectName(obj_name)
-                b.clicked.connect(getattr(self, f"_do_{sig}"))
-                bh.addWidget(b)
+            bh.setSpacing(8)
+            self._bot_btns = {}
+
+            b_conn = QPushButton("连接相机")
+            b_conn.setObjectName("ActionConnect")
+            b_conn.clicked.connect(self._do_connect)
+            bh.addWidget(b_conn)
+            self._bot_btns["connect"] = b_conn
+
+            self._conn_state = QLabel("")
+            self._conn_state.setStyleSheet("color:#94a3b8;font-size:11px;")
+            bh.addWidget(self._conn_state)
+
             bh.addStretch()
+
+            b_cap = QPushButton("拍照")
+            b_cap.setObjectName("ActionCapture")
+            b_cap.clicked.connect(self._do_capture)
+            bh.addWidget(b_cap)
+            self._bot_btns["capture"] = b_cap
+
+            sep = QFrame()
+            sep.setObjectName("BotSep")
+            sep.setFrameShape(QFrame.VLine)
+            bh.addWidget(sep)
+
+            b_stop = QPushButton("■ 停止运行")
+            b_stop.setObjectName("ActionStop")
+            b_stop.clicked.connect(self._do_stop)
+            bh.addWidget(b_stop)
+            self._bot_btns["stop"] = b_stop
+
+            b_start = QPushButton("▶ 开始运行")
+            b_start.setObjectName("ActionStart")
+            b_start.clicked.connect(self._do_start)
+            bh.addWidget(b_start)
+            self._bot_btns["start"] = b_start
+
             self._body_l.addWidget(bot)
+            self._apply_button_state()
+            self._update_conn_state()
         else:
             # 工程师模式：左侧参数栏 + 右侧主区
             row = QWidget()
@@ -188,11 +228,11 @@ class MainWindow(QMainWindow):
             ml = QVBoxLayout(main)
             ml.setContentsMargins(0, 0, 0, 0)
             ml.setSpacing(0)
-            ml.addWidget(self.banner)
+            ml.addWidget(self._banner_wrap())
             sub = QWidget()
             sh = QHBoxLayout(sub)
-            sh.setContentsMargins(0, 0, 0, 0)
-            sh.setSpacing(0)
+            sh.setContentsMargins(16, 12, 16, 12)  # 与横幅/操作员模式同口径对齐
+            sh.setSpacing(16)
             sh.addWidget(self.camera, 3)
             sh.addWidget(self.history, 2)
             ml.addWidget(sub, 1)
@@ -224,6 +264,10 @@ class MainWindow(QMainWindow):
         )
         s.model_changed.connect(self._on_model_changed)
         s.threshold_changed.connect(self._on_threshold_changed)
+        # 质量检查三阈值：controller 每帧实时读 quality_check.* → config.set 即热生效
+        s.quality_threshold_changed.connect(
+            lambda key, v: self.config.set(f"quality_check.{key}", v)
+        )
         s.connect_clicked.connect(self._do_connect)
         s.start_clicked.connect(self._do_start)
         s.stop_clicked.connect(self.controller.stop_system)
@@ -251,6 +295,12 @@ class MainWindow(QMainWindow):
         self.sidebar.set_current_model(current_model)
         # 置信度阈值
         self.sidebar.set_threshold(self.threshold)
+        # 质量检查三阈值（默认值与 config_manager 口径一致）
+        self.sidebar.set_quality_thresholds(
+            self.config.get("quality_check.blur_threshold", 50.0),
+            int(self.config.get("quality_check.overexposure_threshold", 235)),
+            int(self.config.get("quality_check.underexposure_threshold", 25)),
+        )
         # 触发模式（联动软件间隔行可见性）
         cur_mode = self.config.get("camera_settings.trigger.mode", "preview")
         self.sidebar.set_trigger_mode(cur_mode)
@@ -287,7 +337,7 @@ class MainWindow(QMainWindow):
         self._last_rec = rec
 
     def _on_status(self, status):
-        """controller 状态 → top_bar 运行状态文案。
+        """controller 状态 → top_bar 运行状态文案 + 按钮禁用状态机。
 
         reviewing 时即使 status=RUNNING 也显示"历史图像"（不抢回 live）。
         """
@@ -298,6 +348,33 @@ class MainWindow(QMainWindow):
             self.top_bar.set_run_state(
                 "history" if self.camera.is_reviewing() else "live"
             )
+        self._apply_button_state()
+
+    def _apply_button_state(self):
+        """按钮禁用状态机（I5）：运行中 → 开始禁用/停止可用；已停止 → 反之。
+
+        操作员底栏按钮在 `_apply_mode_layout` 重建，故用 getattr 容错；
+        工程师参数栏按钮常驻，由 sidebar.set_buttons_running 同步。
+        """
+        running = self._status in (STATUS_PREVIEWING, STATUS_RUNNING)
+        btns = getattr(self, "_bot_btns", None) or {}
+        if "start" in btns:
+            btns["start"].setEnabled(not running)
+        if "stop" in btns:
+            btns["stop"].setEnabled(running)
+        if hasattr(self, "sidebar"):
+            self.sidebar.set_buttons_running(running)
+
+    def _update_conn_state(self):
+        """底栏连接相机按钮旁的连接状态小字（相机已连接/未连接）。"""
+        lab = getattr(self, "_conn_state", None)
+        if lab is None:
+            return
+        try:
+            connected = self.controller.camera.is_connected()
+        except Exception:
+            connected = False
+        lab.setText("相机已连接" if connected else "相机未连接")
 
     def _on_warn(self, msg):
         self.toasts.show(msg, severity=severity_for(msg))
@@ -309,10 +386,9 @@ class MainWindow(QMainWindow):
         self.toasts.show(msg, severity="warn")
 
     def _on_stats(self, stats):
-        """吞吐统计路由：磁盘显示（I1）+ 工程师模式吞吐标签（I4）。"""
+        """吞吐统计路由：磁盘显示（I1）。"""
         free_gb = stats.get("free_gb", 0)
         self.top_bar.set_disk(f"{free_gb:.0f}GB 可用")
-        self.sidebar.set_throughput(stats)
 
     def _on_model_loaded(self, ok, model_name):
         """模型后台加载完成（C2）：失败时 toast + combo 恢复到当前实际模型。"""
@@ -460,6 +536,7 @@ class MainWindow(QMainWindow):
             self.controller.disconnect_camera()
         else:
             self.controller.connect_camera()
+        self._update_conn_state()
 
     def _do_start(self):
         self.controller.start_system()

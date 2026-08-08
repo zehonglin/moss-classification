@@ -15,9 +15,9 @@ from app.ui.components.correction_popup import CorrectionPopup, GRADES
 # ---------- 组件基础结构 ----------
 
 def test_grades_constant_has_four_letter_grades():
-    """GRADES 常量四元组（字母, 色值），顺序 A→D，色值符合规格。"""
+    """GRADES 常量四元组（字母, 色值），顺序 A→D，色值符合 v3 规格（700 深度 ramp）。"""
     assert [g for g, _ in GRADES] == ["A", "B", "C", "D"]
-    expected_colors = {"A": "#16a34a", "B": "#65a30d", "C": "#d97706", "D": "#dc2626"}
+    expected_colors = {"A": "#15803d", "B": "#a16207", "C": "#c2410c", "D": "#b91c1c"}
     for g, color in GRADES:
         assert color.lower() == expected_colors[g].lower()
 
@@ -56,7 +56,7 @@ def test_four_buttons_show_only_letters():
 
 
 def test_button_colors_match_grades_constant():
-    """按钮背景色用品级色（A#16a34a/B#65a30d/C#d97706/D#dc2626）。"""
+    """按钮背景色用品级色（v3：A#15803d/B#a16207/C#c2410c/D#b91c1c）。"""
     pop = CorrectionPopup()
     for g, color in GRADES:
         style = pop._btns[g].styleSheet().lower()
@@ -83,19 +83,19 @@ def test_popup_for_records_current_grade():
 
 
 def test_popup_for_marks_current_button_with_outline():
-    """当前品级按钮样式含 outline（白边框视觉标记）。"""
+    """当前品级按钮样式含深色边框标记（v3 浅色卡片上白框不可见，改为深色边框）。"""
     pop = CorrectionPopup()
     pop.popup_for({"prediction": "A", "id": 1}, QLabel())
     cur_style = pop._btns["A"].styleSheet().lower()
-    assert "outline" in cur_style
+    assert "#0f172a" in cur_style
 
 
 def test_popup_for_does_not_mark_other_buttons():
-    """非当前品级按钮不加 outline 标记。"""
+    """非当前品级按钮不加深色边框标记。"""
     pop = CorrectionPopup()
     pop.popup_for({"prediction": "A", "id": 1}, QLabel())
     for g in ("B", "C", "D"):
-        assert "outline" not in pop._btns[g].styleSheet().lower()
+        assert "#0f172a" not in pop._btns[g].styleSheet().lower()
 
 
 def test_popup_for_shows_current_badge_text():
@@ -108,17 +108,17 @@ def test_popup_for_shows_current_badge_text():
 
 
 def test_popup_for_updates_badge_when_grade_changes():
-    """连续 popup_for 切换当前品级，badge 与 outline 跟随切换。"""
+    """连续 popup_for 切换当前品级，badge 与深色边框跟随切换。"""
     pop = CorrectionPopup()
     pop.popup_for({"prediction": "A", "id": 1}, QLabel())
     assert pop._badges["A"].text() == "当前"
-    assert "outline" in pop._btns["A"].styleSheet().lower()
+    assert "#0f172a" in pop._btns["A"].styleSheet().lower()
 
     pop.popup_for({"prediction": "D", "id": 2}, QLabel())
     assert pop._badges["D"].text() == "当前"
     assert pop._badges["A"].text() == ""
-    assert "outline" in pop._btns["D"].styleSheet().lower()
-    assert "outline" not in pop._btns["A"].styleSheet().lower()
+    assert "#0f172a" in pop._btns["D"].styleSheet().lower()
+    assert "#0f172a" not in pop._btns["A"].styleSheet().lower()
 
 
 # ---------- _click：emit + close（核心行为）----------
@@ -203,10 +203,10 @@ def test_popup_for_shows_popup():
 
 
 def test_popup_for_handles_missing_prediction():
-    """prediction 缺失时 _current 为 None，所有按钮无 outline/badge。"""
+    """prediction 缺失时 _current 为 None，所有按钮无深色边框/badge。"""
     pop = CorrectionPopup()
     pop.popup_for({"id": 1}, QLabel())
     assert pop._current is None
     for g in ("A", "B", "C", "D"):
-        assert "outline" not in pop._btns[g].styleSheet().lower()
+        assert "#0f172a" not in pop._btns[g].styleSheet().lower()
         assert pop._badges[g].text() == ""

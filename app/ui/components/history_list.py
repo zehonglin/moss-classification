@@ -12,11 +12,13 @@
     分页栏：[上一页] [下一页] stretch "第 n 页 · 共 m 页 · 合计 total"
 
 样式：
-    - QListWidget#HistoryList 由全局 style.qss 命中（白底 + 圆角 + 选中/hover）
-    - HistoryItem 内联品级色字（A 绿 / B 黄绿 / C 橙 / D 红）
-    - 低置信（< threshold 且未纠错）→ ⚠ 橙色字
+    - QListWidget#HistoryList 由全局 style.qss 命中（白底 + 圆角 + 中性 slate 选中/hover）
+    - HistoryItem 品级色字 + 描述词（A 良好 / B 中等 / C 较差 / D 不合格，
+      色值取自 design_tokens，与 GradeBanner 同源）
+    - 低置信（< threshold 且未纠错）→ ⚠ 橙色字 + "需复检" chip（仅置信度触发，与品级无关）
     - 已纠错 → 末尾绿色"已改X"角标
-    - 拒采（quality_status != 'ok'）→ 红字"⚠ 质量不合格"
+    - 质量异常（quality_status != 'ok'）→ "⚠ 图像质量不合格 · {翻译后原因}" + "质量异常" chip
+      （原图正常入库，不用"拒采"措辞；原因经 REJECT_REASONS 翻译，与横幅一致）
 
 异步缩略图：
     `_ThumbLoader(QThread)` 用 `QImageReader.setScaledSize` 直接读缩放图（省内存），
@@ -42,12 +44,15 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-# 品级 → 字色（A 绿 / B 黄绿 / C 橙 / D 红；与 style.qss GradeBanner 同源语义色）
-_GRADE_COLOR = {"A": "#16a34a", "B": "#65a30d", "C": "#d97706", "D": "#dc2626"}
+from app.ui.components.design_tokens import GRADE_COLORS, GRADE_NAMES, REJECT_REASONS
+
+# 品级 → 字色（向后兼容别名；取自 design_tokens 单一来源）
+_GRADE_COLOR = GRADE_COLORS
 
 # DB 行列序（与 get_recent_records / search_records_paged 对齐）
 _ROW_KEYS = [
@@ -61,8 +66,9 @@ _ROW_KEYS = [
     "quality_status",
 ]
 
-# 状态下拉 → quality_status 过滤值
-_QMAP = {"全部状态": None, "正常": "ok", "拒采": "rejected"}
+# 状态下拉 → quality_status 过滤值（"质量异常"含 rejected_blur/overexposed/underexposed 等，
+# 过滤值仍用 'rejected' 前缀语义，由 DB 层匹配非 'ok' 记录）
+_QMAP = {"全部状态": None, "正常": "ok", "质量异常": "rejected"}
 
 
 class _ThumbLoader(QThread):
@@ -106,16 +112,16 @@ def _apply_thumb(widget, pm):
 
 
 class HistoryItem(QWidget):
-    """单条历史记录 widget：缩略图 + 品级色字（+置信度） + 时间 + 可选角标。
+    """单条历史记录 widget：缩略图 + 品级色字（+描述词+置信度） + 时间 + 可选角标。
 
     状态色规则：
-      - quality_status != 'ok'  → 红字 "⚠ 质量不合格 · {status}"
-      - corrected_label 非空    → 用品级色字（不再标 ⚠ 低置信）
-      - confidence < threshold 且未纠错 → ⚠ 橙色字
+      - quality_status != 'ok'  → "⚠ 图像质量不合格 · {翻译后原因}" + "质量异常" chip
+      - corrected_label 非空    → 用品级色字（不再标 ⚠ 低置信）+ 绿"已改X"角标
+      - confidence < threshold 且未纠错 → ⚠ 橙色字 + "需复检" chip
       - 其他                     → 品级色字（A/B/C/D 各自色）
     """
 
-    def __init__(self, rec, threshold=0.6, size=26):
+    def __init__(self, rec, threshold=0.6, size=34):
         super().__init__()
         self._rec = rec
         # 持有活跃 loader 引用：避免 Python GC 回收正在运行的 QThread，
@@ -129,7 +135,7 @@ class HistoryItem(QWidget):
         # 缩略图（左；默认占位灰底圆角，loader 完成后填 QPixmap）
         self._thumb = QLabel()
         self._thumb.setFixedSize(size, size)
-        self._thumb.setStyleSheet("background:#262626;border-radius:5px;")
+        self._thumb.setStyleSheet("background:#262626;border-radius:6px;")
         h.addWidget(self._thumb)
 
         # 中：品级/状态 + 时间
@@ -140,20 +146,15 @@ class HistoryItem(QWidget):
         info.addWidget(pred_label)
 
         tm = QLabel(self._format_time(rec.get("timestamp")))
-        tm.setStyleSheet("color:#94a3b8;font-size:9px;")
+        tm.setStyleSheet("color:#94a3b8;font-size:11px;")
         info.addWidget(tm)
 
         h.addLayout(info)
         h.addStretch()
 
-        # 已纠错 → 末尾绿色"已改X"角标
-        corr = rec.get("corrected_label")
-        if corr:
-            tag = QLabel(f"已改{corr}")
-            tag.setStyleSheet(
-                "background:#dcfce7;color:#166534;border-radius:8px;"
-                "padding:1px 5px;font-size:8px;"
-            )
+        # 右侧角标（已纠错 / 需复检 / 质量异常）
+        tag = self._build_tag(rec, threshold)
+        if tag is not None:
             h.addWidget(tag)
 
         # 异步缩略图：thumbnail_path 优先，回退 image_path
@@ -170,24 +171,60 @@ class HistoryItem(QWidget):
     def _build_pred_label(rec, threshold):
         q = rec.get("quality_status") or "ok"
         if q != "ok":
-            lab = QLabel(f"⚠ 质量不合格 · {q}")
-            lab.setStyleSheet("color:#dc2626;font-weight:600;")
+            reason = REJECT_REASONS.get(q, q)
+            lab = QLabel(f"⚠ 图像质量不合格 · {reason}")
+            lab.setStyleSheet("color:#475569;font-weight:700;font-size:12.5px;")
             return lab
 
         grade = rec.get("prediction")
-        grade_color = _GRADE_COLOR.get(grade, "#94a3b8")
+        grade_color = GRADE_COLORS.get(grade, "#94a3b8")
         conf = rec.get("confidence")
         corr = rec.get("corrected_label")
         # 低置信（未纠错）→ ⚠ 橙色；纠错过 → 用品级色字
         review = isinstance(conf, (int, float)) and conf < threshold and not corr
         prefix = "⚠ " if review else ""
         grade_txt = str(grade) if grade else "?"
-        conf_txt = f"  {conf:.0%}" if isinstance(conf, (int, float)) else ""
-        lab = QLabel(prefix + grade_txt + conf_txt)
+        name_txt = GRADE_NAMES.get(str(grade), "")
+        name_part = f' <span style="color:#64748b;font-weight:600;font-size:11.5px">{name_txt}</span>' if name_txt else ""
+        conf_txt = f'  <span style="color:#64748b;font-weight:600;font-size:12px">{conf:.0%}</span>' if isinstance(conf, (int, float)) else ""
+        lab = QLabel(prefix + grade_txt + name_part + conf_txt)
         lab.setStyleSheet(
-            f"font-weight:800;font-size:13px;color:{'#d97706' if review else grade_color};"
+            f"font-weight:800;font-size:13px;color:{'#c2410c' if review else grade_color};"
         )
         return lab
+
+    @staticmethod
+    def _build_tag(rec, threshold):
+        """右侧角标：已纠错 > 需复检 > 质量异常（互斥优先级）。"""
+        q = rec.get("quality_status") or "ok"
+        corr = rec.get("corrected_label")
+        conf = rec.get("confidence")
+
+        if corr:
+            tag = QLabel(f"已改{corr}")
+            tag.setStyleSheet(
+                "background:#dcfce7;color:#166534;border-radius:9px;"
+                "padding:2px 7px;font-size:10px;font-weight:700;"
+            )
+            return tag
+
+        if q != "ok":
+            tag = QLabel("质量异常")
+            tag.setStyleSheet(
+                "background:#e2e8f0;color:#334155;border:1px solid #cbd5e1;"
+                "border-radius:9px;padding:2px 7px;font-size:10px;font-weight:700;"
+            )
+            return tag
+
+        review = isinstance(conf, (int, float)) and conf < threshold
+        if review:
+            tag = QLabel("⚠ 需复检")
+            tag.setStyleSheet(
+                "background:#fef3c7;color:#92400e;border:1px solid #fde68a;"
+                "border-radius:9px;padding:2px 7px;font-size:10px;font-weight:700;"
+            )
+            return tag
+        return None
 
     @staticmethod
     def _format_time(ts):
@@ -234,16 +271,17 @@ class HistoryList(QFrame):
         fbar.setContentsMargins(10, 7, 10, 7)
         fbar.setSpacing(6)
 
+        f_title = QLabel("历史记录")
+        f_title.setStyleSheet("font-weight:700;font-size:13px;margin-right:4px;")
+        fbar.addWidget(f_title)
+
         self._f_pred = QComboBox()
         self._f_pred.addItems(["全部品级", "A", "B", "C", "D"])
         self._f_q = QComboBox()
-        self._f_q.addItems(["全部状态", "正常", "拒采"])
+        self._f_q.addItems(list(_QMAP.keys()))
 
         q_btn = QPushButton("查询")
-        q_btn.setObjectName("ActionStart")
-        q_btn.setStyleSheet(
-            "background:#16a34a;color:#fff;border:none;border-radius:5px;padding:2px 10px;"
-        )
+        q_btn.setObjectName("FilterQuery")  # 样式归 style.qss（小号实心绿，勿复用放大的 ActionStart）
         q_btn.clicked.connect(self._emit_filter)
 
         self._exp = QPushButton("↓ 导出记录")
@@ -265,11 +303,21 @@ class HistoryList(QFrame):
         self._pause_hint.hide()
         v.addWidget(self._pause_hint)
 
-        # —— 列表 ——
+        # —— 列表（与空状态页叠放：QStackedWidget 切换，不占列表 item 数） ——
         self._list = QListWidget()
         self._list.setObjectName("HistoryList")
         self._list.itemClicked.connect(self._on_item_clicked)
-        v.addWidget(self._list)
+
+        self._empty = QLabel("暂无记录\n连接相机并开始运行后，识别结果会显示在这里")
+        self._empty.setAlignment(Qt.AlignCenter)
+        # 透明底：边框/白底由外层 QFrame#HistoryFrame 卡片统一提供（对齐 mockup）
+        self._empty.setStyleSheet("color:#94a3b8;font-size:12px;line-height:1.8;")
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._list)    # index 0：列表页
+        self._stack.addWidget(self._empty)   # index 1：空状态页
+        self._stack.setCurrentWidget(self._list)
+        v.addWidget(self._stack)
 
         # —— 分页栏 ——
         pbar = QHBoxLayout()
@@ -282,7 +330,7 @@ class HistoryList(QFrame):
         self._next.clicked.connect(lambda: self.page_change_requested.emit(self._page + 1))
 
         self._total_label = QLabel("")
-        self._total_label.setStyleSheet("color:#64748b;font-size:10px;")
+        self._total_label.setStyleSheet("color:#64748b;font-size:11px;")
 
         pbar.addWidget(self._prev)
         pbar.addWidget(self._next)
@@ -315,6 +363,11 @@ class HistoryList(QFrame):
             if w is not None:
                 w.deleteLater()
         self._list.clear()
+        if not rows:
+            # 空状态页：无匹配记录时给引导，而不是白屏（不占列表 item 数）
+            self._stack.setCurrentWidget(self._empty)
+        else:
+            self._stack.setCurrentWidget(self._list)
         for r in rows:
             rec = r if isinstance(r, dict) else self._row_to_dict(r)
             self._append_item(rec, at_end=True)
@@ -334,6 +387,7 @@ class HistoryList(QFrame):
             )
             self._pause_hint.show()
             return
+        self._stack.setCurrentWidget(self._list)  # 新记录到达 → 离开空状态页
         self._append_item(rec, at_end=False)
 
     def clear_selection(self):

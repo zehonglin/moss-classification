@@ -10,7 +10,7 @@ GradeBanner，这里只处理瞬态告警。
 命中 QSS。
 """
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 # message 含任一关键词 → danger（致命级，红）；否则 warn（警示级，黄）
 _DANGER_KEYWORDS = ("严重不足", "已停止", "内存不足", "失败", "致命")
@@ -58,15 +58,20 @@ class _Toast(QFrame):
             f"color:{'#78350f' if is_warn else '#7f1d1d'};"
             "font-size:11px;"
         )
-        v.addWidget(title)
-        v.addWidget(body)
 
+        # 标题行：标题 + × 关闭按钮（右上角，符合平台惯例；原在卡片底部右下）
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.addWidget(title)
+        head.addStretch()
         if on_close:
             close = QPushButton("×")
-            close.setStyleSheet("border:none;color:#94a3b8;font-size:14px;padding:0 2px;")
+            close.setStyleSheet("border:none;color:#94a3b8;font-size:14px;padding:0 2px;background:transparent;")
             close.setCursor(Qt.PointingHandCursor)
             close.clicked.connect(lambda: on_close(self))
-            v.addWidget(close, alignment=Qt.AlignRight)
+            head.addWidget(close)
+        v.addLayout(head)
+        v.addWidget(body)
 
         # setProperty 后必须 polish，QSS dynamic-property 选择器才会生效
         self.style().unpolish(self)

@@ -3,7 +3,7 @@
 QFrame#ParamSidebar 容器，分组布局：
     - 相机：触发模式 / 触发防抖 / 分辨率宽高 + 应用 / 软件间隔（条件显示） / 曝光
     - 模型：当前模型 / 置信度阈值
-    - 质量检查：模糊/过曝/欠曝 阈值入口（占位）
+    - 质量检查：模糊 / 过曝 / 欠曝 三个阈值字段（quality_check.* config，热生效）
     - 底部操作按钮：连接相机 / 开始运行 / 停止运行 / 拍照（软件触发）
 
 **软件间隔行**仅当触发模式 = `software_continuous` 时显示，其余隐藏。可见性
@@ -37,7 +37,7 @@ class ParamSidebar(QFrame):
         set_trigger_mode(mode): 设置触发模式 combo + 联动软件间隔行可见性。
         _interval_visible_for(mode) -> bool: 纯函数，仅 software_continuous=True。
 
-    Signals (11):
+    Signals (12):
         trigger_changed(str):    触发模式 combo 切换。
         debouncer_changed(int):  触发防抖 us。
         resolution_apply(int,int): 分辨率应用按钮 (w, h)。
@@ -45,13 +45,14 @@ class ParamSidebar(QFrame):
         interval_changed(int):   软件间隔 ms。
         model_changed(str):      当前模型名。
         threshold_changed(float): 置信度阈值。
+        quality_threshold_changed(str, float): 质量阈值（config key 后缀, 值）。
         connect_clicked():       连接相机按钮。
         start_clicked():         开始运行按钮。
         stop_clicked():          停止运行按钮。
         capture_clicked():       拍照按钮。
     """
 
-    # ---- 11 signals ----
+    # ---- 11+1 signals ----
     trigger_changed = Signal(str)
     debouncer_changed = Signal(int)
     resolution_apply = Signal(int, int)
@@ -59,6 +60,8 @@ class ParamSidebar(QFrame):
     interval_changed = Signal(int)
     model_changed = Signal(str)
     threshold_changed = Signal(float)
+    # 质量检查阈值：(config key 后缀, 值) —— "blur_threshold"/"overexposure_threshold"/"underexposure_threshold"
+    quality_threshold_changed = Signal(str, float)
     connect_clicked = Signal()
     start_clicked = Signal()
     stop_clicked = Signal()
@@ -88,7 +91,7 @@ class ParamSidebar(QFrame):
         model_group = self._build_model_group()
         v.addWidget(model_group)
 
-        # 质量检查入口组（占位）
+        # 质量检查组（模糊/过曝/欠曝三个真实阈值字段，绑定 quality_check.* config）
         quality_group = self._build_quality_group()
         v.addWidget(quality_group)
 
@@ -104,11 +107,6 @@ class ParamSidebar(QFrame):
         self._b_cap = self._action_btn("拍照（软件触发）", self.capture_clicked, "ActionCapture")
         for b in (self._b_conn, self._b_start, self._b_stop, self._b_cap):
             v.addWidget(b)
-
-        # 吞吐统计标签（工程师模式可见；由上层 _on_stats 更新）
-        self._throughput = QLabel("平均 0ms · 超时 0 · 拒采 0")
-        self._throughput.setStyleSheet("color:#64748b;font-size:10px;padding-top:4px;")
-        v.addWidget(self._throughput)
 
     # ================================================================
     # 纯函数（TDD 重点）：仅 software_continuous 返回 True
@@ -157,17 +155,20 @@ class ParamSidebar(QFrame):
         """设置置信度阈值（替代直访 `_thr.setValue`）。"""
         self._thr.setValue(value)
 
-    def set_throughput(self, stats: dict):
-        """更新底部吞吐标签（平均耗时 / 超时 / 拒采）。
+    def set_quality_thresholds(self, blur: float, over: int, under: int):
+        """填充质量检查三阈值初始值（由上层从 quality_check.* config 注入）。
 
-        仅工程师模式可见；操作员模式 ParamSidebar 不在布局中，更新无副作用。
+        setValue 会触发 valueChanged → quality_threshold_changed → config.set，
+        写入同值无害（与其他参数的初始化模式一致）。
         """
-        avg_ms = stats.get("avg_ms", 0)
-        timeouts = stats.get("processing_timeout_count", 0)
-        rejects = stats.get("quality_rejects", 0)
-        self._throughput.setText(
-            f"平均 {avg_ms:.0f}ms · 超时 {timeouts} · 拒采 {rejects}"
-        )
+        self._blur.setValue(blur)
+        self._over.setValue(over)
+        self._under.setValue(under)
+
+    def set_buttons_running(self, running: bool):
+        """操作按钮禁用状态机：运行中 → 开始禁用/停止可用；已停止 → 反之。"""
+        self._b_start.setEnabled(not running)
+        self._b_stop.setEnabled(running)
 
     # ================================================================
     # internals：构建分组
@@ -243,9 +244,40 @@ class ParamSidebar(QFrame):
         return self._make_group("模型", rows)
 
     def _build_quality_group(self) -> QFrame:
-        placeholder = QLabel("模糊/过曝/欠曝 阈值 ▾")
-        placeholder.setStyleSheet("color:#94a3b8;")
-        return self._make_group("质量检查", [("", placeholder)])
+        """质量检查三阈值（对齐 mockup：模糊/过曝/欠曝各一行真实数值字段）。
+
+        取值范围与 config_manager 默认值口径一致：
+            模糊阈值  —— 拉普拉斯方差，0~10000，默认 50.0（一位小数）
+            过曝阈值  —— 灰度均值上限，0~255，默认 235
+            欠曝阈值  —— 灰度均值下限，0~255，默认 25
+        SystemController 每帧实时读 config → config.set 即热生效。
+        """
+        self._blur = QDoubleSpinBox()
+        self._blur.setRange(0.0, 10000.0)
+        self._blur.setDecimals(1)
+        self._blur.setSingleStep(5.0)
+        self._blur.valueChanged.connect(
+            lambda v: self.quality_threshold_changed.emit("blur_threshold", v)
+        )
+
+        self._over = QSpinBox()
+        self._over.setRange(0, 255)
+        self._over.valueChanged.connect(
+            lambda v: self.quality_threshold_changed.emit("overexposure_threshold", v)
+        )
+
+        self._under = QSpinBox()
+        self._under.setRange(0, 255)
+        self._under.valueChanged.connect(
+            lambda v: self.quality_threshold_changed.emit("underexposure_threshold", v)
+        )
+
+        rows = [
+            ("模糊阈值:", self._blur),
+            ("过曝阈值:", self._over),
+            ("欠曝阈值:", self._under),
+        ]
+        return self._make_group("质量检查", rows)
 
     def _make_group(self, title: str, rows: list[tuple[str, object]], extra=None) -> QFrame:
         """组装一个参数组：组标题 + 表单行（+ 可选附加 widget）。

@@ -1,31 +1,40 @@
-"""CorrectionPopup 气泡纠错组件。
+"""CorrectionPopup 气泡纠错组件（v3 浅色卡片版）。
 
-点横幅 ✎ 弹出的气泡：4 个纯字母品级色按钮 A/B/C/D（无描述文字），
-当前品级按钮加白边框 outline + "当前"角标；点选即 emit grade_selected 并 close。
+点横幅 ✎ 弹出的气泡：4 个品级色按钮 A/B/C/D，按钮**只显示字母**（品级描述词
+良好/中等/较差/不合格放在按钮下方的小字里，不占用按钮文本），当前品级按钮
+加深色 outline + "当前"角标；点选即 emit grade_selected 并 close。
+
+v3 变更（UI 评审 I6）：
+- 深色 slate 弹层 → **浅色卡片**（与整体浅色体系一致），顶部带锚定箭头；
+- 按钮下方补品级描述词小字（与横幅/历史项措辞一致）；
+- 数字键 1–4 快捷选择（操作员手不离键盘，3 秒内完成纠错），ESC 关闭；
+- 当前品级 outline 由白色改为深色（浅色卡片上白框不可见）。
 
 设计要点：
 - `setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)`——气泡无标题栏、点外部自动关。
-- 按钮**只显示字母**（用户明确要求），用品级色背景 + 白字大号粗体；不内联"铺满/覆盖高"等描述。
-- `_badges[g]` 是每个按钮上方的角标 QLabel，当前品级显示"当前"，其他为空。
 - `popup_for(record, anchor)`：record['prediction'] 决定当前品级，气泡 move 到
   anchor 全局 bottomLeft 附近（左偏 80px 防 popup 右溢出）后 show。
 - `grade_selected = Signal(str)`，`_click(grade)` emit 后 close。
 """
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
-# 品级 → 色值（与 style.qss / GradeBanner 对齐）
-GRADES = [("A", "#16a34a"), ("B", "#65a30d"), ("C", "#d97706"), ("D", "#dc2626")]
+from app.ui.components.design_tokens import GRADE_COLORS, GRADE_NAMES
 
-# 按钮基础样式（无 outline）；当前品级追加 _OUTLINE_STYLE
+# 品级 → 色值（取自 design_tokens 单一来源；与 style.qss / GradeBanner 对齐）
+GRADES = [(g, GRADE_COLORS[g]) for g in ("A", "B", "C", "D")]
+
+# 按钮基础样式（无 outline）；当前品级追加 _OUTLINE_STYLE（深色——浅色卡片上白框不可见）
 _BUTTON_BASE_STYLE = (
     "color:#fff;border:none;border-radius:10px;"
     "font-size:28px;font-weight:800;padding:0;"
 )
-_OUTLINE_STYLE = "outline:3px solid #fff;outline-offset:2px;"
+_OUTLINE_STYLE = "border:3px solid #0f172a;"
 _BADGE_STYLE = "color:#fff;background:#0f172a;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:600;"
+_NAME_STYLE = "color:#64748b;font-size:10.5px;font-weight:600;"
 
 
 class CorrectionPopup(QFrame):
@@ -43,22 +52,42 @@ class CorrectionPopup(QFrame):
         super().__init__()
         self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setObjectName("CorrectionPopup")
-        self.setStyleSheet("background:#1e293b;border:1px solid #334155;border-radius:12px;")
+        # 外层透明：卡片 _card 有背景，顶部箭头用字符三角模拟
+        self.setStyleSheet("background:transparent;")
 
         self._current = None
         self._btns: dict[str, QPushButton] = {}
         self._badges: dict[str, QLabel] = {}
+        self._names: dict[str, QLabel] = {}
 
-        # 整体纵向布局：标题 / 按钮行 / 提示
-        v = QVBoxLayout(self)
+        # 整体纵向布局：箭头 / 卡片
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # 顶部锚定箭头（白色三角字符，右对齐于卡片纠错按钮锚点附近）
+        arrow_row = QHBoxLayout()
+        arrow_row.setContentsMargins(0, 0, 46, 0)
+        arrow_row.addStretch()
+        arrow = QLabel("▲")
+        arrow.setStyleSheet("color:#ffffff;font-size:12px;")
+        arrow_row.addWidget(arrow)
+        outer.addLayout(arrow_row)
+
+        # 卡片
+        self._card = QFrame()
+        self._card.setStyleSheet(
+            "background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;"
+        )
+        v = QVBoxLayout(self._card)
         v.setContentsMargins(14, 12, 14, 12)
         v.setSpacing(8)
 
-        title = QLabel("纠正品级 · 点选正确品级")
-        title.setStyleSheet("color:#e2e8f0;font-size:12px;font-weight:600;")
+        title = QLabel("纠正品级 · 点选或按 1–4")
+        title.setStyleSheet("color:#0f172a;font-size:12.5px;font-weight:700;")
         v.addWidget(title)
 
-        # 四按钮横排（每格 = 角标 + 按钮 的纵向小布局）
+        # 四按钮横排（每格 = 角标 + 按钮 + 描述词 的纵向小布局）
         row = QHBoxLayout()
         row.setSpacing(8)
         for g, color in GRADES:
@@ -73,20 +102,34 @@ class CorrectionPopup(QFrame):
             self._badges[g] = badge
 
             btn = QPushButton(g)
-            btn.setFixedSize(70, 64)
+            btn.setFixedSize(70, 60)
             btn.setStyleSheet(f"background:{color};{_BUTTON_BASE_STYLE}")
             btn.clicked.connect(lambda _checked=False, gg=g: self._click(gg))
             self._btns[g] = btn
 
+            name = QLabel(GRADE_NAMES[g])
+            name.setStyleSheet(_NAME_STYLE)
+            name.setAlignment(Qt.AlignCenter)
+            self._names[g] = name
+
             cell.addWidget(badge)
             cell.addWidget(btn)
+            cell.addWidget(name)
             row.addLayout(cell)
         v.addLayout(row)
 
         self._info = QLabel("")
-        self._info.setStyleSheet("color:#94a3b8;font-size:10px;")
+        self._info.setStyleSheet("color:#64748b;font-size:10.5px;")
         self._info.setAlignment(Qt.AlignCenter)
         v.addWidget(self._info)
+
+        outer.addWidget(self._card)
+
+        # 数字键 1–4 快捷选择（popup 激活时生效）
+        for i, (g, _color) in enumerate(GRADES, start=1):
+            sc = QShortcut(QKeySequence(str(i)), self)
+            sc.setContext(Qt.WindowShortcut)
+            sc.activated.connect(lambda gg=g: self._click(gg))
 
     def popup_for(self, record, anchor):
         """根据 record（含 prediction）标记当前品级，并在 anchor 下方弹出。
@@ -98,7 +141,7 @@ class CorrectionPopup(QFrame):
         self._apply_current_mark()
 
         if self._current:
-            self._info.setText(f"当前 {self._current} · 可再次改正")
+            self._info.setText(f"当前 {self._current} · 可再次改正 · ESC 关闭")
         else:
             self._info.setText("请选择品级")
 

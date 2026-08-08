@@ -1,10 +1,15 @@
-"""CameraView 取景器组件（实时态 + 选中历史态 + 双击全屏）。
+"""CameraView 取景器组件（实时态 + 选中历史态 + 双击全屏 + 正方形铺满）。
+
+v3 变更（UI 评审 D3c）：相机画面为正方形（2048×2048），取景区域按
+**高=宽** 设定——`_view` 不放进 layout，而是在 resizeEvent 里手动计算
+居中正方形几何（side = min(w, h)），图像缩放后正好铺满整个设定区域，
+左右由深色画框（容器背景）自然延伸，不再出现非匹配比例的缩放留白。
 
 QWidget 容器包两层：
     - `_view`（QLabel#CameraView）：实时态显示相机帧；选中历史时显示原图。
       由全局 `style.qss` 的 `QLabel#CameraView` 规则命中深色背景。
-    - `_retbar`（QWidget 返回条）：仅选中历史时 show，悬浮在 `_view` 顶部。
-      含 `◀ 返回实时` 按钮 + 时间信息 + "双击全屏"提示。
+    - `_retbar`（QWidget 返回条）：仅选中历史时 show，悬浮在容器顶部。
+      含 `◀ 返回实时` 按钮 + 时间信息 + "ESC 退出查看"提示。
 
 态机：
     `_reviewing` 标志单向切换两个态：
@@ -21,9 +26,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
+
+# 空状态占位文案（含操作引导；"实时画面"前缀保留以兼容既有断言/用户习惯）
+_PLACEHOLDER = "实时画面\n\n连接相机 → 开始运行"
 
 
 class _ClickableLabel(QLabel):
@@ -41,7 +48,7 @@ class _ClickableLabel(QLabel):
 
 
 class CameraView(QWidget):
-    """取景器容器（QWidget 包 QLabel#CameraView + 返回条）。
+    """取景器容器（QWidget 包 正方形 QLabel#CameraView + 返回条）。
 
     Public API:
         set_live(qimage|None):        实时态刷帧；reviewing 时跳过。
@@ -59,25 +66,24 @@ class CameraView(QWidget):
     def __init__(self):
         super().__init__()
         self._reviewing = False
+        # 容器深色画框：正方形 _view 之外的左右延伸区。
+        # 注意：plain QWidget 必须开 WA_StyledBackground，QSS/内联背景才会绘制
+        # （否则左右延伸区显示系统默认浅灰 —— 实测运行时就漏了这个属性）
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("background:#0d0d0d;border-radius:12px;")
+        self.setMinimumSize(200, 200)
 
-        # —— 取景画面 QLabel ——
-        v = QVBoxLayout(self)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(0)
-
-        self._view = _ClickableLabel("实时画面")
-        self._view.setObjectName("CameraView")  # 命中 style.qss
+        # —— 取景画面 QLabel（手动几何：居中正方形，不进 layout） ——
+        self._view = _ClickableLabel(_PLACEHOLDER, self)
+        self._view.setObjectName("CameraView")  # 背景/线框/圆角命中 style.qss
         self._view.setAlignment(Qt.AlignCenter)
-        self._view.setMinimumSize(200, 200)
-        self._view.setStyleSheet(
-            "background:#171717;color:#525252;border-radius:8px;"
-            "font-size:13px;letter-spacing:3px;"
-        )
+        # 内联只放占位文案的字体属性；视觉样式（含 3px 灰色线框）归 style.qss
+        self._view.setStyleSheet("font-size:13px;letter-spacing:3px;line-height:1.8;")
         self._view.doubleClicked.connect(self.request_fullscreen)
-        v.addWidget(self._view)
 
         # —— 返回条（默认隐藏） ——
-        self._retbar = QWidget()
+        self._retbar = QWidget(self)
+        self._retbar.setAttribute(Qt.WA_StyledBackground, True)  # plain QWidget 须开此属性才画背景
         self._retbar.setStyleSheet("background:rgba(0,0,0,.6);")
         rh = QHBoxLayout(self._retbar)
         rh.setContentsMargins(12, 7, 12, 7)
@@ -100,17 +106,18 @@ class CameraView(QWidget):
         rh.addWidget(self._ret_info)
         rh.addStretch()
         rh.addWidget(self._ret_zoom)
-
-        # 悬浮在 _view 之上（同父），resizeEvent 同步宽度
-        self._retbar.setParent(self)
-        self._retbar.move(0, 0)
         self._retbar.hide()
 
     # ---------- Qt hooks ----------
 
     def resizeEvent(self, e):
+        """容器缩放 → _view 取居中正方形（side = min(w,h)），返回条贴容器顶。"""
         super().resizeEvent(e)
-        self._retbar.setFixedWidth(self.width())
+        w, h = self.width(), self.height()
+        side = min(w, h)
+        self._view.setGeometry((w - side) // 2, (h - side) // 2, side, side)
+        self._retbar.setFixedWidth(w)
+        self._retbar.move(0, 0)
         self._retbar.raise_()
 
     # ---------- public API ----------
@@ -119,18 +126,18 @@ class CameraView(QWidget):
         """实时帧刷新。
 
         `_reviewing=True` 时直接 return（看历史时不让实时帧覆盖原图）。
-        `qimage=None` → 显示"实时画面"占位（相机未连接/初始化阶段）。
+        `qimage=None` → 显示空状态占位（相机未连接/初始化阶段）。
 
         注意：QLabel.setPixmap 会清空 text，setText 会清空 pixmap —— 两互斥。
         所以"显示占位文案"时先 clear pixmap 再 setText；"显示 pixmap"时先 setText("")
-        再 setPixmap。
+        再 setPixmap。正方形帧缩放到正方形 _view = 恰好铺满整个设定区域。
         """
         if self._reviewing:
             return
         if qimage is None:
             # 先清 pixmap（setPixmap 会清 text），再 setText 设占位
             self._view.setPixmap(QPixmap())
-            self._view.setText("实时画面")
+            self._view.setText(_PLACEHOLDER)
             return
         self._view.setText("")
         self._view.setPixmap(
@@ -174,7 +181,7 @@ class CameraView(QWidget):
         self._retbar.hide()
         # setPixmap 会清 text → 先 clear pixmap 再 setText 占位
         self._view.setPixmap(QPixmap())
-        self._view.setText("实时画面")
+        self._view.setText(_PLACEHOLDER)
 
     # ---------- public accessors ----------
 

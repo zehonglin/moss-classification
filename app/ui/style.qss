@@ -2,55 +2,117 @@
 QWidget { background-color:#f1f5f9; color:#0f172a; font-family:"Segoe UI","Microsoft YaHei UI",sans-serif; font-size:14px; }
 QMainWindow, QFrame#ContentArea { background-color:#f1f5f9; }
 QFrame { border:none; }
+/* 标签默认透明底：否则全局 QWidget 底色会让每个 QLabel 带上 #f1f5f9 色块，
+   在横幅等彩色底上形成补丁（Chip/CameraView 等 ID 规则仍会覆盖本规则） */
+QLabel { background:transparent; }
 
-/* 品级语义色变量通过 objectName/property 命中，见各组件 */
+/* ===== 设计 token（v3，与 design_tokens.py 同源）=====
+   品级 ramp 700 深度：A #15803d / B #a16207 / C #c2410c / D #b91c1c
+   白字对比度全部 ≥ 4.8:1（WCAG AA 正文级）；绿→黄→橙→红等距色阶。
+   选中态中性 slate（#eef2f7/#94a3b8），不占用品级/警告语义色。 */
 
 /* ===== 顶部统计栏 ===== */
 QFrame#TopBar { background-color:#ffffff; border-bottom:1px solid #e2e8f0; }
-QLabel#RunState { color:#16a34a; font-weight:600; }
+QLabel#RunState { font-weight:600; }
+QLabel#RunState[state="live"] { color:#15803d; }
+QLabel#RunState[state="idle"] { color:#94a3b8; }
 QLabel#StatItem { color:#475569; }
 QLabel#StatItem b { color:#0f172a; }
+/* 统计折叠 chip：今日 N 盘 · 通过率（明细弹出层在 TopStatBar 内组装） */
+QPushButton#StatChip { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+                       padding:5px 14px; color:#475569; font-weight:600; }
+QPushButton#StatChip:hover { background:#f1f5f9; border-color:#cbd5e1; }
+QFrame#StatsPopup { background:#ffffff; border:1px solid #e2e8f0; border-radius:10px; }
+/* 模式切换分段控件 */
+QFrame#ModeSeg { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; }
+QPushButton#ModeSegBtn { background:transparent; border:none; border-radius:6px;
+                         padding:5px 14px; color:#64748b; font-weight:600; }
+QPushButton#ModeSegBtn[active="1"] { background:#ffffff; color:#0f172a; }
 
 /* ===== 品级横幅 =====
    banner 用 dynamic property grade=A/B/C/D/rejected/wait 控制背景，
    由组件 setProperty("grade", x) + polish 触发 */
-QFrame#GradeBanner { color:#ffffff; }
-QFrame#GradeBanner[grade="A"] { background-color:#16a34a; }
-QFrame#GradeBanner[grade="B"] { background-color:#65a30d; }
-QFrame#GradeBanner[grade="C"] { background-color:#d97706; }
-QFrame#GradeBanner[grade="D"] { background-color:#dc2626; }
+QFrame#GradeBanner { color:#ffffff; border-radius:10px; }
+QFrame#GradeBanner[grade="A"] { background-color:#15803d; }
+QFrame#GradeBanner[grade="B"] { background-color:#a16207; }
+QFrame#GradeBanner[grade="C"] { background-color:#c2410c; }
+QFrame#GradeBanner[grade="D"] { background-color:#b91c1c; }
 QFrame#GradeBanner[grade="rejected"] { background-color:#334155; }
 QFrame#GradeBanner[grade="wait"] { background-color:#e2e8f0; color:#64748b; }
 QFrame#GradeBanner[review_pulse="1"] { border:3px solid rgba(255,255,255,0.85); }
+/* 横幅内文字一律白（全局 QWidget 字色直接命中 QLabel，不覆盖就是深字） */
+QFrame#GradeBanner QLabel { background:transparent; color:#ffffff; }
+QFrame#GradeBanner[grade="wait"] QLabel { color:#64748b; }
+/* 横幅小标签（当前品级/等待识别）：彩色态 78% 白，wait 态 slate */
+QFrame#GradeBanner QLabel#BannerLabel { color:rgba(255,255,255,.78); }
+QFrame#GradeBanner[grade="wait"] QLabel#BannerLabel { color:#64748b; }
+/* 横幅内置信度进度条：白填充 + 28% 白轨道 */
+QProgressBar#BannerConfBar { background:rgba(255,255,255,.28); border:none; border-radius:4px;
+                             min-height:8px; max-height:8px; }
+QProgressBar#BannerConfBar::chunk { background:#ffffff; border-radius:4px; }
 
-/* ===== 取景器 ===== */
-QLabel#CameraView { background-color:#171717; color:#525252; border-radius:8px; }
+/* ===== 取景器 =====
+   正方形画面带加粗灰色线框（对齐 mockup viewer 内框 stroke #3f3f3f）；
+   容器深色画框由 camera_view.py 内联（WA_StyledBackground）提供 */
+QLabel#CameraView { background-color:#171717; color:#525252; border:3px solid #3f3f3f; border-radius:8px; }
 
-/* ===== 历史 ===== */
-QListWidget#HistoryList { background-color:#ffffff; border:1px solid #e2e8f0; border-radius:8px; outline:none; }
+/* ===== 历史 =====
+   HistoryFrame 整体是白色圆角卡片（筛选栏+列表+分页都在卡片内，对齐 mockup .hist）；
+   内部 QListWidget/空状态页/Stack 均透明/无边框，卡片边框只由外层提供 */
+QFrame#HistoryFrame { background-color:#ffffff; border:1px solid #e2e8f0; border-radius:10px; }
+QFrame#HistoryFrame QStackedWidget { background:transparent; }
+QListWidget#HistoryList { background-color:transparent; border:none; outline:none; }
 QListWidget::item { border-radius:6px; padding:2px; }
-QListWidget::item:selected { background-color:#fff7ed; border:1px solid #fdba74; }
+/* 选中态中性 slate（原浅橙底+橙边框废除：橙色属 C 品级/警告语义） */
+QListWidget::item:selected { background-color:#eef2f7; border:1px solid #94a3b8; }
 QListWidget::item:hover { background-color:#f8fafc; }
 
 /* ===== 参数栏 ===== */
 QFrame#ParamSidebar { background-color:#ffffff; border-right:1px solid #e2e8f0; }
-QLabel#GroupTitle { color:#94a3b8; font-size:9px; letter-spacing:1px; }
+QLabel#GroupTitle { color:#94a3b8; font-size:11px; font-weight:700; letter-spacing:1px; }
 
 /* ===== 按钮 ===== */
 QPushButton { background-color:#ffffff; color:#334155; border:1px solid #cbd5e1; border-radius:7px; padding:7px 14px; font-weight:600; }
 QPushButton:hover { background-color:#f8fafc; border-color:#94a3b8; }
 QPushButton:disabled { background-color:#f1f5f9; color:#94a3b8; border-color:#e2e8f0; }
-QPushButton#ActionStart { background-color:#16a34a; color:#fff; border:none; }
-QPushButton#ActionStart:hover { background-color:#15803d; }
-QPushButton#ActionStop { background-color:#fee2e2; color:#dc2626; border:1px solid #fecaca; }
+/* 主操作：开始运行（放大、实心绿、运行时禁用） */
+QPushButton#ActionStart { background-color:#15803d; color:#fff; border:none;
+                          min-width:150px; padding:11px 24px; font-size:15px; }
+QPushButton#ActionStart:hover { background-color:#166534; }
+QPushButton#ActionStart:disabled { background-color:#e2e8f0; color:#94a3b8; }
+/* 停止运行：红色软底（非实心，避免与品级 D 红抢层级） */
+QPushButton#ActionStop { background-color:#fef2f2; color:#b91c1c; border:1px solid #fecaca;
+                         min-width:130px; padding:11px 24px; }
 QPushButton#ActionStop:hover { background-color:#fecaca; }
+QPushButton#ActionStop:disabled { background-color:#f1f5f9; color:#94a3b8; border-color:#e2e8f0; }
 QPushButton#ActionCapture, QPushButton#ActionConnect { background-color:#f1f5f9; border:1px solid #cbd5e1; }
+/* 底栏竖分隔线（停止与开始之间的物理隔离） */
+QFrame#BotSep { background:#e2e8f0; max-width:1px; margin:6px 8px; }
+/* 历史筛选栏"查询"：小号实心绿（筛选行内唯一主操作；勿复用放大的 ActionStart） */
+QPushButton#FilterQuery { background-color:#15803d; color:#ffffff; border:none; padding:5px 14px; }
+QPushButton#FilterQuery:hover { background-color:#166534; }
 
 /* ===== 输入 ===== */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
   background-color:#ffffff; border:1px solid #e2e8f0; border-radius:6px; padding:5px 8px; color:#0f172a; min-height:26px;
 }
-QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border:1px solid #16a34a; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border:1px solid #15803d; }
+/* 下拉框：右侧留出箭头区 + 自定义 slate 小箭头（__RES__ 由 style_loader 替换为
+   绝对路径），替换 windowsvista 原生粗箭头块；弹出列表白底圆角 + 中性 slate 选中。
+   注意：用 PNG 不用 SVG —— 本环境 PySide6 缺 qsvg imageformats 插件，
+   QSS image:url(*.svg) 经 QImageReader 加载会静默失败（箭头消失） */
+QComboBox { padding-right:28px; }
+QComboBox::drop-down { subcontrol-origin:padding; subcontrol-position:center right;
+                       width:24px; border:none; background:transparent; }
+QComboBox::down-arrow { image:url(__RES__/combo_arrow_down.png); width:10px; height:10px; }
+QComboBox QAbstractItemView { background:#ffffff; border:1px solid #e2e8f0; border-radius:6px;
+                              padding:4px; outline:none;
+                              selection-background-color:#eef2f7; selection-color:#0f172a; }
+QComboBox QAbstractItemView::item { min-height:26px; padding:2px 8px; border-radius:4px; }
+/* 数字框：不显示上下步进按钮（2026-08-08 设计口径：工程师直接键入数值，
+   对照 mockup .inp 纯输入框；width:0 隐藏子控件） */
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button { width:0; border:none; image:none; }
 
 /* ===== Chip / 徽章 ===== */
 QLabel#Chip { background-color:#f1f5f9; border:1px solid #e2e8f0; border-radius:5px; padding:2px 8px; color:#475569; }
@@ -58,7 +120,7 @@ QLabel#Chip { background-color:#f1f5f9; border:1px solid #e2e8f0; border-radius:
 /* ===== Toast ===== */
 QFrame#Toast { border-radius:9px; padding:9px 11px; }
 QFrame#Toast[severity="warn"] { background-color:#fffbeb; border:1px solid #fde68a; border-left:3px solid #f59e0b; }
-QFrame#Toast[severity="danger"] { background-color:#fef2f2; border:1px solid #fecaca; border-left:3px solid #dc2626; }
+QFrame#Toast[severity="danger"] { background-color:#fef2f2; border:1px solid #fecaca; border-left:3px solid #b91c1c; }
 
 /* ===== 滚动条 ===== */
 QScrollBar:vertical { border:none; background:#f1f5f9; width:10px; margin:0; }

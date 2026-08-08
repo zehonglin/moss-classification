@@ -20,14 +20,13 @@ def main():
         logging.error(f"Config error: {e}")
         sys.exit(1)
 
-    # Load and apply stylesheet
-    qss_file = "app/ui/style.qss"
-    if os.path.exists(qss_file):
-        with open(qss_file, "r") as f:
-            app.setStyleSheet(f.read())
-        logging.info(f"Loaded stylesheet: {qss_file}")
+    # Load and apply stylesheet（统一走 style_loader：utf-8 + __RES__ 资源路径替换）
+    from app.ui.style_loader import load_stylesheet
+
+    if load_stylesheet(app):
+        logging.info("Loaded stylesheet: app/ui/style.qss")
     else:
-        logging.warning(f"Stylesheet file '{qss_file}' not found.")
+        logging.warning("Stylesheet file 'app/ui/style.qss' not found.")
 
     try:
         window = MainWindow(config_manager)

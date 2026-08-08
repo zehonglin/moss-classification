@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>苔藓识别 UI v3 优化稿 · 操作员 / 工程师双模式</title>
+<style>
+  :root{
+    /* ===== 优化后设计 token ===== */
+    --bg:#f1f5f9; --surface:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
+    --text:#0f172a; --text-2:#475569; --text-3:#64748b; --text-4:#94a3b8;
+    /* 品级 ramp 整体下沉到 700 深度：白字对比度全部 ≥ 4.8:1（AA，含小字） */
+    --grade-a:#15803d;  /* 绿  良好   5.0:1 */
+    --grade-b:#a16207;  /* 黄  中等   4.9:1 */
+    --grade-c:#c2410c;  /* 橙  较差   5.3:1 */
+    --grade-d:#b91c1c;  /* 红  不合格 7.0:1 */
+    --rejected:#334155; --wait:#e2e8f0;
+    /* 选中态改中性（原橙色系违反"背景=品级/橙=警告"正交原则） */
+    --sel-bg:#eef2f7; --sel-border:#94a3b8;
+    --viewfinder:#171717;
+    --shadow-pop:0 16px 40px rgba(15,23,42,.18);
+    --radius-card:12px; --radius-btn:7px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;}
+  body{background:#e8edf3;padding:32px 24px;color:var(--text);}
+  .page{max-width:1460px;margin:0 auto;}
+  .page h1{font-size:20px;font-weight:700;margin-bottom:4px;}
+  .page .sub{font-size:13px;color:var(--text-3);margin-bottom:20px;}
+  .mode-title{font-size:15px;font-weight:700;margin:26px 0 8px;display:flex;align-items:center;gap:8px;}
+  .mode-title .mtag{font-size:11px;font-weight:600;color:var(--text-3);}
+
+  /* ============ 应用窗口 ============ */
+  .app{background:var(--bg);border:1px solid var(--border-strong);border-radius:14px;
+       overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,.12);position:relative;}
+
+  /* ---- 顶部统计栏 ---- */
+  .topbar{height:56px;background:var(--surface);border-bottom:1px solid var(--border);
+          display:flex;align-items:center;padding:0 16px;gap:14px;}
+  .logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;}
+  .logo svg{display:block;}
+  /* ① 模式切换：分段控件（原下拉式"操作员 ▾"看不出是开关，且易误点） */
+  .seg{display:flex;background:#f1f5f9;border:1px solid var(--border);border-radius:8px;padding:3px;gap:2px;}
+  .seg button{border:none;background:transparent;font-size:12.5px;font-weight:600;color:var(--text-3);
+              padding:5px 14px;border-radius:6px;cursor:default;display:flex;align-items:center;gap:5px;}
+  .seg button.on{background:#fff;color:var(--text);box-shadow:0 1px 3px rgba(15,23,42,.12);}
+  .seg .lock{font-size:10px;}
+  .run{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--grade-a);}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--grade-a);animation:breath 2s ease-in-out infinite;}
+  @keyframes breath{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(21,128,61,.35);}50%{opacity:.55;box-shadow:0 0 0 5px rgba(21,128,61,0);}}
+  .topbar .sp{flex:1;}
+  /* ② 统计折叠为单一 chip；"通过率"与前后文字留足间隔 */
+  .statchip{display:flex;align-items:center;gap:10px;background:#f8fafc;border:1px solid var(--border);
+            border-radius:8px;padding:6px 14px;font-size:12.5px;color:var(--text-2);}
+  .statchip b{color:var(--text);margin:0 2px;}
+  .statchip .ok{color:var(--grade-a);font-weight:700;margin-left:6px;}
+  .statchip .sep{color:var(--border-strong);}
+  .iconbtn{display:flex;align-items:center;gap:6px;color:var(--text-3);font-size:12.5px;position:relative;}
+  .badge{position:absolute;top:-6px;right:-9px;background:var(--grade-d);color:#fff;font-size:9px;font-weight:700;
+         min-width:15px;height:15px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 3px;}
+
+  /* ---- 品级横幅 ---- */
+  .banner-wrap{padding:14px 16px 0;}
+  .banner{background:var(--grade-a);border-radius:var(--radius-card);color:#fff;min-height:96px;
+          display:flex;align-items:center;padding:12px 22px;gap:20px;position:relative;}
+  .b-label{font-size:11px;letter-spacing:2px;color:rgba(255,255,255,.78);font-weight:600;}
+  .b-grade{display:flex;align-items:baseline;gap:14px;}
+  .b-letter{font-size:58px;font-weight:800;line-height:1;}
+  .b-div{width:1px;align-self:stretch;background:rgba(255,255,255,.35);margin:8px 0;}
+  /* ③ 品级描述词（良好/中等/较差/不合格）——A/B/C/D 均为正常品级，非动作指令 */
+  .b-name .nm{font-size:24px;font-weight:700;line-height:1.15;}
+  .b-name .nmsub{font-size:12px;color:rgba(255,255,255,.82);margin-top:3px;}
+  .b-conf{margin-left:26px;display:flex;align-items:center;gap:10px;}
+  .b-conf .track{width:170px;height:8px;border-radius:4px;background:rgba(255,255,255,.28);overflow:hidden;}
+  .b-conf .fill{height:100%;width:96%;background:#fff;border-radius:4px;}
+  .b-conf .pct{font-size:16px;font-weight:700;}
+  .banner .sp{flex:1;}
+  .b-tag{background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.5);border-radius:20px;
+         padding:3px 10px;font-size:11px;font-weight:700;}
+  .b-edit{background:rgba(255,255,255,.95);color:var(--text);border:none;border-radius:var(--radius-btn);
+          padding:8px 16px;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;}
+
+  /* ---- 中部：取景器(正方形铺满) + 历史 ---- */
+  .mid{display:flex;gap:16px;padding:14px 16px;height:560px;}
+  /* ④ 相机画面为正方形：取景区域高 = 宽，图像铺满整个设定区域，左右深色画框延伸 */
+  .viewerwrap{flex:1;background:#0d0d0d;border-radius:var(--radius-card);position:relative;
+              display:flex;justify-content:center;overflow:hidden;}
+  .viewer{height:100%;aspect-ratio:1/1;background:var(--viewfinder);position:relative;
+          display:flex;align-items:center;justify-content:center;}
+  .livebadge{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:6px;z-index:2;
+             background:rgba(0,0,0,.55);color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;
+             padding:4px 10px;border-radius:6px;}
+  .livebadge .d{width:7px;height:7px;border-radius:50%;background:#ef4444;animation:breath 1.6s infinite;}
+  .viewerwrap .hint{position:absolute;bottom:12px;right:14px;color:#525252;font-size:11px;letter-spacing:1px;z-index:2;}
+  .viewer svg.frame{display:block;width:100%;height:100%;}
+
+  /* ---- 历史面板 ---- */
+  .hist{width:400px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);
+        border-radius:var(--radius-card);display:flex;flex-direction:column;overflow:hidden;}
+  .hist-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);}
+  .hist-head .t{font-size:13px;font-weight:700;}
+  .fselect{border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text-2);
+           padding:5px 8px;background:#fff;}
+  .hbtn{border:1px solid var(--border-strong);background:#fff;border-radius:6px;font-size:12px;
+        color:var(--text-2);padding:5px 10px;font-weight:600;display:flex;align-items:center;gap:4px;}
+  .hbtn.primary{background:var(--grade-a);border-color:var(--grade-a);color:#fff;}
+  .hist-body{flex:1;padding:6px;overflow:hidden;}
+  .hitem{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:8px;position:relative;}
+  .hitem + .hitem{margin-top:2px;}
+  .hitem.sel{background:var(--sel-bg);border:1px solid var(--sel-border);padding:6px 8px;}
+  .hitem.sel::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--grade-b);}
+  .thumb{width:34px;height:34px;border-radius:6px;background:#262626;flex-shrink:0;overflow:hidden;}
+  .hinfo{flex:1;min-width:0;}
+  .hline1{font-size:13px;font-weight:800;display:flex;align-items:center;gap:6px;}
+  .hline2{font-size:11px;color:var(--text-4);margin-top:1px;}
+  .ga{color:var(--grade-a);} .gb{color:var(--grade-b);} .gc{color:var(--grade-c);} .gd{color:var(--grade-d);}
+  .gname{font-weight:600;color:var(--text-3);font-size:11.5px;}
+  .conf{font-weight:600;color:var(--text-3);font-size:12px;}
+  .chip{font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;white-space:nowrap;}
+  .chip.review{background:#fef3c7;color:#92400e;border:1px solid #fde68a;}
+  .chip.fixed{background:#dcfce7;color:#166534;}
+  .chip.quality{background:#e2e8f0;color:#334155;border:1px solid #cbd5e1;}
+  .rej-text{color:var(--text-2);font-size:12.5px;font-weight:700;}
+  .hist-foot{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border);}
+  .hist-foot .pg{font-size:11px;color:var(--text-3);}
+
+  /* ---- 底部操作栏 ---- */
+  .botbar{height:68px;background:var(--surface);border-top:1px solid var(--border);
+          display:flex;align-items:center;padding:0 16px;gap:10px;}
+  .btn{border-radius:var(--radius-btn);font-weight:600;font-size:13.5px;padding:10px 18px;
+       display:flex;align-items:center;gap:7px;border:1px solid var(--border-strong);background:#fff;color:var(--text-2);}
+  /* ⑤ 主操作加大 + 停止与开始物理分离 + 运行态开始按钮禁用 */
+  .btn.primary{background:var(--grade-a);border-color:var(--grade-a);color:#fff;min-width:170px;
+               justify-content:center;font-size:15px;padding:12px 26px;}
+  .btn.primary.off{background:#e2e8f0;border-color:#e2e8f0;color:#94a3b8;}
+  .btn.danger{background:#fef2f2;border-color:#fecaca;color:var(--grade-d);min-width:150px;justify-content:center;}
+  .botbar .gap{width:20px;border-left:1px solid var(--border);height:32px;margin:0 6px;}
+  .botbar .sp{flex:1;}
+  .botbar .tip{font-size:11px;color:var(--text-4);}
+
+  /* ---- Toast（右上角，× 在卡片右上） ---- */
+  .toast{position:absolute;top:68px;right:16px;width:300px;background:#fffbeb;border:1px solid #fde68a;
+         border-left:3px solid #f59e0b;border-radius:9px;padding:10px 12px;box-shadow:var(--shadow-pop);z-index:6;}
+  .toast .tt{font-size:12.5px;font-weight:700;color:#92400e;display:flex;align-items:center;gap:6px;}
+  .toast .tb{font-size:11.5px;color:#78350f;margin-top:3px;}
+  .toast .tx{position:absolute;top:7px;right:9px;color:#b45309;font-size:13px;font-weight:700;}
+
+  /* ---- 标注序号 ---- */
+  .mk{position:absolute;width:22px;height:22px;border-radius:50%;background:#2563eb;color:#fff;
+      font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;
+      box-shadow:0 2px 6px rgba(37,99,235,.4);z-index:5;}
+
+  /* ============ 工程师模式 ============ */
+  .eng-body{display:flex;height:740px;}
+  /* ⑦ 参数栏：分组小标题 11px、表单行距 6px、输入控件统一 30px 高；超出时可滚动 */
+  .sidebar{width:270px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);
+           padding:12px 14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;}
+  .sgroup .gt{font-size:11px;font-weight:700;letter-spacing:1.5px;color:var(--text-4);margin-bottom:6px;}
+  .frow{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .frow label{font-size:12px;color:var(--text-2);width:64px;flex-shrink:0;}
+  .frow .inp{flex:1;border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text);
+             padding:5px 8px;background:#fff;display:flex;align-items:center;justify-content:space-between;min-height:30px;}
+  .frow .inp .unit{color:var(--text-4);font-size:11px;}
+  .frow .inp .caret{color:var(--text-4);font-size:10px;}
+  .mini{padding:4px 12px;font-size:12px;min-width:0;}
+  /* ⑧ 软件间隔行：仅"软件连续"触发时显示（条件显示） */
+  .cond{border:1px dashed var(--border-strong);border-radius:6px;padding:6px 8px;background:#f8fafc;}
+  .cond .cnd{font-size:10px;color:var(--text-4);margin-top:4px;}
+  .sidebar .sp{flex:1;}
+  .ops .obtn{width:100%;justify-content:center;margin-bottom:6px;padding-top:8px;padding-bottom:8px;}
+  .throughput{font-size:10.5px;color:var(--text-3);padding-top:6px;border-top:1px solid var(--border);}
+  .eng-main{flex:1;display:flex;flex-direction:column;min-width:0;}
+  .eng-main .banner-wrap{padding-top:12px;}
+  .eng-main .banner{min-height:84px;}
+  .eng-main .b-letter{font-size:46px;}
+  .eng-main .mid{flex:1;height:auto;min-height:0;padding-top:12px;}
+
+  /* ============ 状态矩阵 & 气泡 展示区 ============ */
+  .section{margin-top:28px;}
+  .section h2{font-size:15px;font-weight:700;margin-bottom:3px;}
+  .section .ss{font-size:12px;color:var(--text-3);margin-bottom:12px;}
+  .matrix{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .mbanner{border-radius:10px;color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px;min-height:64px;}
+  .mbanner .l{font-size:30px;font-weight:800;}
+  .mbanner .r{font-size:12px;opacity:.92;}
+  .mbanner .tag{margin-left:auto;font-size:10.5px;font-weight:700;background:rgba(255,255,255,.2);
+                border:1px solid rgba(255,255,255,.5);padding:2px 9px;border-radius:11px;}
+  .mbanner.review{border:3px solid rgba(255,255,255,.85);}
+  .mbanner.wait{background:var(--wait);color:var(--text-3);}
+  .mbanner.rejected{background:var(--rejected);}
+  .swatches{display:flex;gap:10px;margin-top:12px;}
+  .sw{flex:1;border-radius:8px;padding:8px 10px;color:#fff;font-size:11px;}
+  .sw b{display:block;font-size:14px;}
+  .sw .cr{opacity:.85;font-size:10px;}
+
+  .popupdemo{display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;}
+  .popup{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-pop);
+         padding:14px;width:340px;position:relative;}
+  .popup::before{content:"";position:absolute;top:-7px;right:44px;width:14px;height:14px;background:#fff;
+                 border-left:1px solid var(--border);border-top:1px solid var(--border);transform:rotate(45deg);}
+  .popup .pt{font-size:12.5px;font-weight:700;margin-bottom:10px;color:var(--text);}
+  .prow{display:flex;gap:8px;}
+  .pbtn{flex:1;height:56px;border-radius:10px;color:#fff;font-size:22px;font-weight:800;border:none;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;line-height:1;}
+  .pbtn .pnm{font-size:9.5px;font-weight:600;opacity:.85;margin-top:3px;}
+  .pbtn.cur{outline:3px solid #0f172a;outline-offset:2px;}
+  .pbtn .curtag{position:absolute;top:-9px;background:#0f172a;color:#fff;font-size:9px;font-weight:700;
+                padding:1px 7px;border-radius:7px;}
+  .popup .pi{font-size:10.5px;color:var(--text-3);text-align:center;margin-top:10px;}
+
+  /* ---- 优化点清单 ---- */
+  .legend{margin-top:28px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:18px 20px;}
+  .legend h2{font-size:15px;font-weight:700;margin-bottom:10px;}
+  .legend ol{margin-left:20px;display:grid;grid-template-columns:1fr 1fr;gap:7px 28px;}
+  .legend li{font-size:12.5px;color:var(--text-2);line-height:1.55;}
+  .legend li b{color:var(--text);}
+  .legend .old{color:#b91c1c;text-decoration:line-through;text-decoration-thickness:1px;}
+  .legend .new{color:#15803d;font-weight:700;}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>苔藓识别系统 · UI v3 优化稿</h1>
+  <div class="sub">品级语义：A 良好 / B 中等 / C 较差 / D 不合格（均为正常品级）· 复检仅由"置信度低于阈值"触发 · 质量不合格图像正常入库 · 蓝色序号对应文末优化点清单</div>
+
+  <!-- ================= 操作员模式 ================= -->
+  <div class="mode-title">操作员模式 <span class="mtag">默认模式 · 极简 · 防误触</span></div>
+  <div class="app">
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <div class="logo">
+        <svg width="22" height="22" viewBox="0 0 22 22"><rect width="22" height="22" rx="6" fill="#15803d"/><circle cx="8" cy="13" r="3.4" fill="#a7f3d0"/><circle cx="13.5" cy="9.5" r="2.6" fill="#d1fae5"/><circle cx="14.5" cy="14.5" r="1.7" fill="#6ee7b7"/></svg>
+        苔藓识别
+      </div>
+      <div class="seg">
+        <button class="on">操作员</button>
+        <button>工程师 <span class="lock">🔒</span></button>
+      </div>
+      <div class="mk" style="left:212px;top:14px;">1</div>
+      <div class="run"><span class="dot"></span>运行中 · 实时图像</div>
+      <div class="sp"></div>
+      <div class="statchip">今日 <b>1,240</b> 盘 <span class="sep">·</span> 通过率 <span class="ok">96.2%</span> <span class="sep">·</span> 明细 ▾
+        <div class="mk" style="position:static;margin-left:2px;">2</div>
+      </div>
+      <div class="iconbtn">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#64748b" stroke-width="1.6"><rect x="1.5" y="4" width="13" height="9" rx="2"/><path d="M4.5 7.5h7M4.5 10h4"/></svg>
+        231 GB
+      </div>
+      <div class="iconbtn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#64748b" stroke-width="1.6"><path d="M8 2a4.2 4.2 0 0 0-4.2 4.2c0 3.1-1.3 4.3-1.3 4.3h11S12.2 9.3 12.2 6.2A4.2 4.2 0 0 0 8 2Z"/><path d="M6.5 13a1.6 1.6 0 0 0 3 0"/></svg>
+        <span class="badge">2</span>
+      </div>
+    </div>
+
+    <!-- 品级横幅 -->
+    <div class="banner-wrap">
+      <div class="banner">
+        <div class="mk" style="top:-9px;left:-9px;">3</div>
+        <div>
+          <div class="b-label">当前品级</div>
+          <div style="display:flex;align-items:center;gap:16px;margin-top:2px;">
+            <div class="b-grade"><span class="b-letter">A</span></div>
+            <div class="b-div"></div>
+            <div class="b-name">
+              <div class="nm">良好</div>
+              <div class="nmsub">品级 A</div>
+            </div>
+          </div>
+        </div>
+        <div class="b-conf">
+          <div class="track"><div class="fill"></div></div>
+          <span class="pct">96%</span>
+        </div>
+        <div class="sp"></div>
+        <button class="b-edit">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="#0f172a" stroke-width="1.5"><path d="M9.8 2.2 11.8 4.2 4.9 11.1 2.4 11.6 2.9 9.1Z"/></svg>
+          纠错
+        </button>
+      </div>
+    </div>
+
+    <!-- 中部 -->
+    <div class="mid">
+      <div class="viewerwrap">
+        <div class="mk" style="top:10px;left:50%;margin-left:170px;">4</div>
+        <div class="livebadge"><span class="d"></span>LIVE</div>
+        <div class="viewer">
+          <!-- 正方形托盘画面：铺满整个设定区域 -->
+          <svg class="frame" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice">
+            <rect width="400" height="400" fill="#171717"/>
+            <rect x="14" y="14" width="372" height="372" rx="10" fill="#262626" stroke="#3f3f3f" stroke-width="2"/>
+            <rect x="34" y="34" width="332" height="332" rx="6" fill="#1c2a1e"/>
+            <ellipse cx="130" cy="130" rx="72" ry="60" fill="#2d4a2a"/>
+            <ellipse cx="230" cy="110" rx="80" ry="62" fill="#33522c"/>
+            <ellipse cx="310" cy="150" rx="62" ry="58" fill="#2d4a2a"/>
+            <ellipse cx="170" cy="230" rx="92" ry="68" fill="#3a5c30"/>
+            <ellipse cx="290" cy="250" rx="76" ry="62" fill="#33522c"/>
+            <ellipse cx="110" cy="250" rx="46" ry="42" fill="#40652f"/>
+            <ellipse cx="200" cy="330" rx="90" ry="40" fill="#2d4a2a"/>
+            <g stroke="#4d7c0f" stroke-width="1" opacity=".5">
+              <path d="M90 120q10-8 20 0M160 90q10-8 20 0M250 130q10-8 20 0M130 210q10-8 20 0M270 220q10-8 20 0M200 170q10-8 20 0M150 300q10-8 20 0M240 310q10-8 20 0"/>
+            </g>
+          </svg>
+        </div>
+        <div class="hint">双击全屏 · 滚轮缩放</div>
+      </div>
+
+      <!-- 历史 -->
+      <div class="hist">
+        <div class="hist-head">
+          <span class="t">历史记录</span>
+          <select class="fselect"><option>全部品级</option></select>
+          <select class="fselect"><option>全部状态</option></select>
+          <button class="hbtn primary">查询</button>
+          <div style="flex:1"></div>
+          <button class="hbtn">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#475569" stroke-width="1.5"><path d="M6 1v7M3 5.5 6 8.5 9 5.5M1.5 10.5h9"/></svg>
+            导出
+          </button>
+        </div>
+        <div class="hist-body">
+          <div class="hitem">
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="17" cy="17" rx="13" ry="11" fill="#3a5c30"/></svg></div>
+            <div class="hinfo"><div class="hline1 ga">A <span class="gname">良好</span> <span class="conf">96%</span></div><div class="hline2">10:24:31</div></div>
+          </div>
+          <div class="hitem sel">
+            <div class="mk" style="top:-9px;right:-9px;left:auto;">5</div>
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="15" cy="16" rx="10" ry="8" fill="#33522c"/><ellipse cx="24" cy="22" rx="7" ry="6" fill="#2d4a2a"/></svg></div>
+            <div class="hinfo"><div class="hline1 gb">B <span class="gname">中等</span> <span class="conf">82%</span></div><div class="hline2">10:24:28 · 正在查看</div></div>
+          </div>
+          <div class="hitem">
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="16" cy="18" rx="8" ry="7" fill="#2d4a2a"/></svg></div>
+            <div class="hinfo"><div class="hline1 gb">B <span class="gname">中等</span> <span class="conf">58%</span></div><div class="hline2">10:24:25 · 置信度低于阈值 60%</div></div>
+            <span class="chip review">⚠ 需复检</span>
+          </div>
+          <div class="hitem">
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="17" cy="16" rx="12" ry="10" fill="#3a5c30"/></svg></div>
+            <div class="hinfo"><div class="hline1 ga">A <span class="gname">良好</span> <span class="conf">原 B · 71%</span></div><div class="hline2">10:24:22</div></div>
+            <span class="chip fixed">已改 A</span>
+          </div>
+          <div class="hitem">
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#333"/><rect x="4" y="14" width="26" height="6" rx="3" fill="#4a4a4a"/></svg></div>
+            <div class="hinfo"><div class="rej-text">⚠ 图像质量不合格 · 过曝</div><div class="hline2">10:24:19 · 原图已入库</div></div>
+            <span class="chip quality">质量异常</span>
+          </div>
+          <div class="hitem">
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="16" cy="17" rx="5" ry="4" fill="#2d4a2a"/></svg></div>
+            <div class="hinfo"><div class="hline1 gd">D <span class="gname">不合格</span> <span class="conf">91%</span></div><div class="hline2">10:24:16</div></div>
+          </div>
+          <div class="hitem">
+            <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="17" cy="16" rx="9" ry="8" fill="#33522c"/><ellipse cx="10" cy="22" rx="5" ry="4" fill="#2d4a2a"/></svg></div>
+            <div class="hinfo"><div class="hline1 gc">C <span class="gname">较差</span> <span class="conf">77%</span></div><div class="hline2">10:24:13</div></div>
+          </div>
+        </div>
+        <div class="hist-foot">
+          <button class="hbtn">‹ 上一页</button>
+          <button class="hbtn">下一页 ›</button>
+          <div style="flex:1"></div>
+          <span class="pg">第 1 页 · 共 26 页 · 合计 1,240</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底栏 -->
+    <div class="botbar">
+      <button class="btn">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="#475569" stroke-width="1.5"><path d="M4 2.5h6a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2ZM5 7h4"/></svg>
+        连接相机
+      </button>
+      <span class="tip">相机已连接 · MV-CS200</span>
+      <div class="sp"></div>
+      <div class="mk" style="position:static;">6</div>
+      <button class="btn">拍照</button>
+      <div class="gap"></div>
+      <button class="btn danger">■ 停止运行</button>
+      <button class="btn primary off">▶ 开始运行</button>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast">
+      <div class="tt">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="#92400e" stroke-width="1.6"><path d="M7 1.5 13 12H1Z"/><path d="M7 5.5v3M7 10v.5"/></svg>
+        磁盘空间不足
+      </div>
+      <div class="tb">剩余 231 GB，低于预警水位 250 GB，请及时清理归档。</div>
+      <span class="tx">×</span>
+    </div>
+  </div>
+
+  <!-- ================= 工程师模式 ================= -->
+  <div class="mode-title">工程师模式 <span class="mtag">左参数栏 · 参数同屏即时调试 · 顶栏与操作员一致</span></div>
+  <div class="app">
+    <!-- 顶栏（与操作员一致，仅分段控件高亮"工程师"） -->
+    <div class="topbar">
+      <div class="logo">
+        <svg width="22" height="22" viewBox="0 0 22 22"><rect width="22" height="22" rx="6" fill="#15803d"/><circle cx="8" cy="13" r="3.4" fill="#a7f3d0"/><circle cx="13.5" cy="9.5" r="2.6" fill="#d1fae5"/><circle cx="14.5" cy="14.5" r="1.7" fill="#6ee7b7"/></svg>
+        苔藓识别
+      </div>
+      <div class="seg">
+        <button>操作员</button>
+        <button class="on">工程师</button>
+      </div>
+      <div class="run"><span class="dot"></span>运行中 · 实时图像</div>
+      <div class="sp"></div>
+      <div class="statchip">今日 <b>1,240</b> 盘 <span class="sep">·</span> 通过率 <span class="ok">96.2%</span> <span class="sep">·</span> 明细 ▾</div>
+      <div class="iconbtn">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#64748b" stroke-width="1.6"><rect x="1.5" y="4" width="13" height="9" rx="2"/><path d="M4.5 7.5h7M4.5 10h4"/></svg>
+        231 GB
+      </div>
+      <div class="iconbtn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#64748b" stroke-width="1.6"><path d="M8 2a4.2 4.2 0 0 0-4.2 4.2c0 3.1-1.3 4.3-1.3 4.3h11S12.2 9.3 12.2 6.2A4.2 4.2 0 0 0 8 2Z"/><path d="M6.5 13a1.6 1.6 0 0 0 3 0"/></svg>
+        <span class="badge">2</span>
+      </div>
+    </div>
+
+    <div class="eng-body">
+      <!-- 参数栏 -->
+      <div class="sidebar">
+        <div class="mk" style="top:64px;left:250px;">7</div>
+        <div class="sgroup">
+          <div class="gt">相机</div>
+          <div class="frow"><label>触发模式</label><div class="inp">软件连续 <span class="caret">▾</span></div></div>
+          <div class="frow"><label>触发防抖</label><div class="inp">5000 <span class="unit">us</span></div></div>
+          <div class="frow"><label>分辨率</label><div class="inp">2048 × 2048</div><button class="btn mini">应用</button></div>
+          <div class="cond">
+            <div class="frow" style="margin-bottom:0;"><label>软件间隔</label><div class="inp">3000 <span class="unit">ms</span></div></div>
+            <div class="cnd">⑧ 仅"软件连续"触发时显示</div>
+          </div>
+          <div class="frow" style="margin-top:7px;"><label>曝光(固定)</label><div class="inp">20000 <span class="unit">us</span></div></div>
+        </div>
+        <div class="sgroup">
+          <div class="gt">模型</div>
+          <div class="frow"><label>当前模型</label><div class="inp">moss_v3.onnx <span class="caret">▾</span></div></div>
+          <div class="frow"><label>置信度阈值</label><div class="inp">0.60</div></div>
+        </div>
+        <div class="sgroup">
+          <div class="gt">质量检查</div>
+          <div class="frow"><label>模糊阈值</label><div class="inp">100.0</div></div>
+          <div class="frow"><label>过曝阈值</label><div class="inp">245</div></div>
+          <div class="frow"><label>欠曝阈值</label><div class="inp">15</div></div>
+        </div>
+        <div class="sp"></div>
+        <div class="ops">
+          <div class="gt">操作</div>
+          <button class="btn obtn">连接相机</button>
+          <button class="btn primary obtn off">▶ 开始运行</button>
+          <button class="btn danger obtn">■ 停止运行</button>
+          <button class="btn obtn">拍照（软件触发）</button>
+        </div>
+        <div class="throughput">平均 42ms · 超时 0 · 质量异常 3</div>
+      </div>
+
+      <!-- 主区 -->
+      <div class="eng-main">
+        <div class="banner-wrap">
+          <div class="banner" style="background:var(--grade-b)">
+            <div>
+              <div class="b-label">当前品级</div>
+              <div style="display:flex;align-items:center;gap:14px;margin-top:2px;">
+                <div class="b-grade"><span class="b-letter">B</span></div>
+                <div class="b-div"></div>
+                <div class="b-name"><div class="nm">中等</div><div class="nmsub">品级 B</div></div>
+              </div>
+            </div>
+            <div class="b-conf">
+              <div class="track"><div class="fill" style="width:82%"></div></div>
+              <span class="pct">82%</span>
+            </div>
+            <div class="sp"></div>
+            <button class="b-edit">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="#0f172a" stroke-width="1.5"><path d="M9.8 2.2 11.8 4.2 4.9 11.1 2.4 11.6 2.9 9.1Z"/></svg>
+              纠错
+            </button>
+          </div>
+        </div>
+        <div class="mid">
+          <div class="viewerwrap">
+            <div class="livebadge"><span class="d"></span>LIVE</div>
+            <div class="viewer">
+              <svg class="frame" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice">
+                <rect width="400" height="400" fill="#171717"/>
+                <rect x="14" y="14" width="372" height="372" rx="10" fill="#262626" stroke="#3f3f3f" stroke-width="2"/>
+                <rect x="34" y="34" width="332" height="332" rx="6" fill="#1c2a1e"/>
+                <ellipse cx="150" cy="140" rx="70" ry="55" fill="#33522c"/>
+                <ellipse cx="270" cy="170" rx="65" ry="55" fill="#2d4a2a"/>
+                <ellipse cx="180" cy="270" rx="80" ry="60" fill="#2d4a2a"/>
+                <ellipse cx="300" cy="290" rx="50" ry="42" fill="#33522c"/>
+                <g stroke="#4d7c0f" stroke-width="1" opacity=".5">
+                  <path d="M120 130q10-8 20 0M240 160q10-8 20 0M160 250q10-8 20 0M280 280q10-8 20 0"/>
+                </g>
+              </svg>
+            </div>
+            <div class="hint">双击全屏 · 滚轮缩放</div>
+          </div>
+          <div class="hist">
+            <div class="hist-head">
+              <span class="t">历史记录</span>
+              <select class="fselect"><option>全部品级</option></select>
+              <select class="fselect"><option>全部状态</option></select>
+              <button class="hbtn primary">查询</button>
+              <div style="flex:1"></div>
+              <button class="hbtn">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#475569" stroke-width="1.5"><path d="M6 1v7M3 5.5 6 8.5 9 5.5M1.5 10.5h9"/></svg>
+                导出
+              </button>
+            </div>
+            <div class="hist-body">
+              <div class="hitem">
+                <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="15" cy="16" rx="10" ry="8" fill="#33522c"/><ellipse cx="24" cy="22" rx="7" ry="6" fill="#2d4a2a"/></svg></div>
+                <div class="hinfo"><div class="hline1 gb">B <span class="gname">中等</span> <span class="conf">82%</span></div><div class="hline2">10:24:31</div></div>
+              </div>
+              <div class="hitem">
+                <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="16" cy="18" rx="8" ry="7" fill="#2d4a2a"/></svg></div>
+                <div class="hinfo"><div class="hline1 gb">B <span class="gname">中等</span> <span class="conf">58%</span></div><div class="hline2">10:24:28 · 置信度低于阈值 60%</div></div>
+                <span class="chip review">⚠ 需复检</span>
+              </div>
+              <div class="hitem">
+                <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#1c2a1e"/><ellipse cx="17" cy="17" rx="13" ry="11" fill="#3a5c30"/></svg></div>
+                <div class="hinfo"><div class="hline1 ga">A <span class="gname">良好</span> <span class="conf">96%</span></div><div class="hline2">10:24:25</div></div>
+              </div>
+              <div class="hitem">
+                <div class="thumb"><svg width="34" height="34" viewBox="0 0 34 34"><rect width="34" height="34" fill="#333"/><rect x="4" y="14" width="26" height="6" rx="3" fill="#4a4a4a"/></svg></div>
+                <div class="hinfo"><div class="rej-text">⚠ 图像质量不合格 · 模糊</div><div class="hline2">10:24:22 · 原图已入库</div></div>
+                <span class="chip quality">质量异常</span>
+              </div>
+            </div>
+            <div class="hist-foot">
+              <button class="hbtn">‹ 上一页</button>
+              <button class="hbtn">下一页 ›</button>
+              <div style="flex:1"></div>
+              <span class="pg">第 1 页 · 共 26 页</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 横幅状态矩阵 ================= -->
+  <div class="section">
+    <h2>品级横幅 · 状态矩阵（新色板）</h2>
+    <div class="ss">背景 = 品级（良好/中等/较差/不合格），角标 = 异常状态。"需复检"仅在置信度低于阈值时出现，与品级本身无关；质量不合格图像正常入库留存。</div>
+    <div class="matrix">
+      <div class="mbanner" style="background:var(--grade-a)"><span class="l">A</span><span class="r">良好 · 96%</span></div>
+      <div class="mbanner review" style="background:var(--grade-c)"><span class="l">C</span><span class="r">较差 · 54% · 置信度低于阈值</span><span class="tag">⚠ 需复检</span></div>
+      <div class="mbanner rejected"><span class="l">⚠</span><span class="r">图像质量不合格 · 过曝 · 原图已入库</span></div>
+      <div class="mbanner wait"><span class="l">…</span><span class="r">运行中 · 等待托盘到位 · 光电触发抓拍</span></div>
+    </div>
+    <div class="swatches">
+      <div class="sw" style="background:var(--grade-a)"><b>A 良好 #15803d</b><span class="cr">白字 5.0:1 · 原 #16a34a 仅 3.3:1</span></div>
+      <div class="sw" style="background:var(--grade-b)"><b>B 中等 #a16207</b><span class="cr">白字 4.9:1 · 原 #65a30d 仅 3.1:1 且与 A 色相距不足</span></div>
+      <div class="sw" style="background:var(--grade-c)"><b>C 较差 #c2410c</b><span class="cr">白字 5.3:1 · 原 #d97706 仅 3.2:1</span></div>
+      <div class="sw" style="background:var(--grade-d)"><b>D 不合格 #b91c1c</b><span class="cr">白字 7.0:1</span></div>
+    </div>
+  </div>
+
+  <!-- ================= 纠错气泡 ================= -->
+  <div class="section">
+    <h2>纠错气泡 · 浅色卡片版</h2>
+    <div class="ss">原为深色 slate 弹层，与整体浅色体系割裂；改为浅色卡片 + 顶部箭头锚定 + 键盘 1–4 快捷选择；按钮附品级描述词。</div>
+    <div class="popupdemo">
+      <div class="popup">
+        <div class="pt">纠正品级 · 点选或按 1–4</div>
+        <div class="prow">
+          <button class="pbtn cur" style="background:var(--grade-a)"><span class="curtag">当前</span>A<span class="pnm">良好</span></button>
+          <button class="pbtn" style="background:var(--grade-b)">B<span class="pnm">中等</span></button>
+          <button class="pbtn" style="background:var(--grade-c)">C<span class="pnm">较差</span></button>
+          <button class="pbtn" style="background:var(--grade-d)">D<span class="pnm">不合格</span></button>
+        </div>
+        <div class="pi">当前 A · 可再次改正 · ESC 关闭</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 优化点清单 ================= -->
+  <div class="legend">
+    <h2>优化点清单（编号对应界面标注）</h2>
+    <ol>
+      <li><b>模式切换改分段控件</b>：<span class="old">"操作员 ▾"下拉式</span> → 分段开关 + 工程师 🔒 暗示权限门槛，状态一目了然且不易误点。</li>
+      <li><b>顶部统计折叠</b>：<span class="old">A/B/C/D+纠错+不合格 6 组数字常驻</span> → 单 chip"今日 N 盘 · 通过率"，明细收进 popover；"通过率"与前后文字留足间隔。</li>
+      <li><b>品级描述词 + 品级色加深</b>：横幅大字旁标注<span class="new">良好 / 中等 / 较差 / 不合格</span>（A/B/C/D 均为正常品级，不用动作指令）；品级色下沉至 700 深度，白字对比度全部 ≥ 4.8:1（原 3.1–3.3:1，横幅上 10–16px 小字不达 AA）。</li>
+      <li><b>正方形画面铺满</b>：相机画面为正方形，取景区域按高=宽设定、图像 slice 铺满整个区域，左右深色画框自然延伸，不再出现缩放留白。</li>
+      <li><b>选中态改中性色</b>：<span class="old">浅橙底 + 橙边框</span> → 中性 slate 底 + 品级色左条。橙色在设计系统里属于 C 品级/警告语义，选中态用它违反正交原则。</li>
+      <li><b>底栏主次与防误触</b>：开始运行（主）放大加深、运行时禁用；停止运行与开始之间加分隔线拉开物理距离；连接相机降为 ghost 并显示连接状态。</li>
+      <li><b>工程师参数栏</b>：分组小标题 11px 大写间距、表单行 30px 统一控件高、操作按钮纵向排列于栏底，底部常驻吞吐统计（平均耗时/超时/质量异常）。</li>
+      <li><b>条件显示软件间隔</b>：仅触发模式 = 软件连续时显示"软件间隔"行，其余模式隐藏，参数栏不堆无用项。</li>
+      <li><b>复检语义修正</b>：⚠ 需复检仅由"置信度低于阈值"触发，与品级无关（C/D 品级本身不自动复检）。</li>
+      <li><b>质量不合格措辞修正</b>：<span class="old">拒采 · 未出品级</span> → "图像质量不合格 · 过曝 · 原图已入库"——此类记录同样入库存档；chip 用"质量异常"与品级 D「不合格」区分。</li>
+      <li><b>字号下限 11px</b>：<span class="old">时间 9px / 组标题 9px / 角标 8px</span> → 全部 ≥ 10.5px，产线 1m+ 视距可读；Emoji 图标统一改 SVG。</li>
+      <li><b>实现层修复</b>：历史列表拒采原因未翻译（rejected_blur 原文显示）、置信度进度条/等待 spinner 缺失、Toast × 在卡片底部、按钮无禁用状态机——详见评审文档 §2。</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>
