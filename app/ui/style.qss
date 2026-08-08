@@ -21,6 +21,7 @@ QFrame#GradeBanner[grade="C"] { background-color:#d97706; }
 QFrame#GradeBanner[grade="D"] { background-color:#dc2626; }
 QFrame#GradeBanner[grade="rejected"] { background-color:#334155; }
 QFrame#GradeBanner[grade="wait"] { background-color:#e2e8f0; color:#64748b; }
+QFrame#GradeBanner[review_pulse="1"] { border:3px solid rgba(255,255,255,0.85); }
 
 /* ===== 取景器 ===== */
 QLabel#CameraView { background-color:#171717; color:#525252; border-radius:8px; }

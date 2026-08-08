@@ -93,7 +93,7 @@ class CameraView(QWidget):
         self._ret_info = QLabel("")
         self._ret_info.setStyleSheet("color:#e5e7eb;")
 
-        self._ret_zoom = QLabel("双击全屏 · 滚轮缩放")
+        self._ret_zoom = QLabel("ESC 退出查看")
         self._ret_zoom.setStyleSheet("color:#94a3b8;")
 
         rh.addWidget(self._ret_back)

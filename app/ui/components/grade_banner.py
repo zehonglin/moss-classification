@@ -8,7 +8,7 @@ banner_state 是状态矩阵的核心：把 record dict 映射成横幅状态描
 "正交"：低置信 review 态不改品级色（仍按 prediction 着色），仅切换 kind 与标签；
 只有 rejected（拒采）和 corrected（人工纠正）会改变 grade/letter。
 """
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
 
@@ -134,6 +134,13 @@ class GradeBanner(QFrame):
         self._lay.addWidget(self._tag)
         self._lay.addWidget(self._edit)
 
+        # 低置信 review 态脉冲边框：QSS 不支持 animation，用 QTimer 周期切
+        # review_pulse property + qss[review_pulse="1"] 白边框实现闪烁
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(500)
+        self._pulse_on = False
+        self._pulse_timer.timeout.connect(self._tick_pulse)
+
         # 初始占位态（kind=wait，仅组件内部使用）
         self.set_state({"grade": "wait", "letter": "—", "conf": "", "kind": "wait", "show_edit": False})
 
@@ -165,6 +172,14 @@ class GradeBanner(QFrame):
 
         self._edit.setVisible(state["show_edit"])
 
+        # review 态：启动脉冲；其他态：停止 + 复位 review_pulse
+        if kind == "review":
+            self._pulse_timer.start()
+        else:
+            self._pulse_timer.stop()
+            self._pulse_on = False
+            self.setProperty("review_pulse", "0")
+
         # dynamic property 改变后必须手动 polish，否则 QSS 不会重新求值
         self.style().unpolish(self)
         self.style().polish(self)
@@ -174,6 +189,13 @@ class GradeBanner(QFrame):
         if on:
             self._tag.setText("正在查看历史记录")
             self._tag.show()
+
+    def _tick_pulse(self):
+        """review 态脉冲：周期切 review_pulse property 让 qss 白边框闪烁。"""
+        self._pulse_on = not self._pulse_on
+        self.setProperty("review_pulse", "1" if self._pulse_on else "0")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     # ---------- public accessors ----------
 

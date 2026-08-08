@@ -86,7 +86,10 @@ class ToastStack(QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName("ToastStack")
-        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setFixedWidth(300)
+        # 容器透明：只 _Toast 有背景，栈本身浮动不遮内容
+        self.setStyleSheet("background:transparent;")
+        self._host = None  # 宿主主窗（attach_to 设），reposition 用
 
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
@@ -94,6 +97,28 @@ class ToastStack(QFrame):
         # 末尾 stretch：新 toast 用 insertWidget(count-1) 插在 stretch 之前，
         # 保持栈顶对齐；count() 返回时减去这个 stretch。
         self._lay.addStretch()
+
+    def attach_to(self, host):
+        """作为 host（主窗）的浮动子 widget，定位右上角，跟随 host resize。
+
+        构造时 ToastStack 默认不可见；attach_to 后 show。空栈高度 0 不可见，
+        show(msg) 加 _Toast 后增高显现（浮在内容右上角）。
+        """
+        self._host = host
+        self.setParent(host)
+        self.reposition()
+        super().show()  # 显示 widget（ToastStack.show 被"添加 toast"覆盖，用 super 调 QWidget.show）
+        self.raise_()
+
+    def reposition(self):
+        """重新定位到 host 右上角（顶部统计栏下方 12px、右边 16px）。"""
+        if self._host is None:
+            return
+        host_w = self._host.width()
+        top_h = self._host.top_bar.height() if hasattr(self._host, "top_bar") else 0
+        self.move(max(host_w - self.width() - 16, 0), top_h + 12)
+        self.adjustSize()
+        self.raise_()
 
     def show(self, message, severity="warn", timeout_ms=6000):
         """新增一条 toast。

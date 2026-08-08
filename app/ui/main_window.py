@@ -111,6 +111,9 @@ class MainWindow(QMainWindow):
         # 首页加载
         self._on_page_change(1)
 
+        # toast 浮动栈挂到主窗右上角（attach_to 内部 show）
+        self.toasts.attach_to(self)
+
         # ESC：退出历史 / 关闭气泡
         QShortcut(QKeySequence("Esc"), self, activated=self._on_esc)
 
@@ -485,6 +488,15 @@ class MainWindow(QMainWindow):
         toggle + 恢复 window flags/reparent 后再启用。
         """
         return
+
+    # ================================================================
+    # 窗口尺寸
+    # ================================================================
+
+    def resizeEvent(self, event):
+        """窗口缩放 → toast 栈跟随重定位右上角。"""
+        super().resizeEvent(event)
+        self.toasts.reposition()
 
     # ================================================================
     # 清理
