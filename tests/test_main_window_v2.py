@@ -126,3 +126,57 @@ def test_operator_mode_has_bottom_buttons(tmp_path):
     # 底栏内应有 4 个 QPushButton
     btns = [b for b in bot_widget.findChildren(QPushButton)]
     assert len(btns) == 4
+
+
+# ---- final review fix 覆盖 ----
+
+
+def test_page_change_preserves_filter(tmp_path):
+    """C1: 筛选后翻页仍带 filter 参数（不返回未过滤全量）。"""
+    win, ctrl = _win(tmp_path)
+    win._on_filter({"prediction": "A", "quality_status": None})
+    assert ctrl.last_paged["prediction"] == "A"
+    win._on_page_change(2)  # 翻页
+    assert ctrl.last_paged["prediction"] == "A"  # 仍带 filter
+    assert ctrl.last_paged["page"] == 2
+
+
+def test_model_loaded_failure_toasts(tmp_path):
+    """C2: 模型加载失败 → toast danger。"""
+    win, ctrl = _win(tmp_path)
+    ctrl.model_loaded.emit(False, "bad.onnx")
+    assert win.toasts.count() >= 1  # 失败 toast 已显示
+
+
+def test_stats_updates_disk_display(tmp_path):
+    """I1: stats_updated 含 free_gb → top_bar 磁盘显示。"""
+    win, ctrl = _win(tmp_path)
+    ctrl.stats_updated.emit(
+        {
+            "free_gb": 380,
+            "avg_ms": 32,
+            "processing_timeout_count": 0,
+            "quality_rejects": 0,
+        }
+    )
+    assert "380" in win.top_bar._disk.text()
+
+
+def test_status_running_while_reviewing_shows_history(tmp_path):
+    """I3: 选中历史（reviewing）时 status RUNNING → top_bar 显示"历史图像"。"""
+    from app.controllers.system_controller import STATUS_RUNNING
+
+    win, ctrl = _win(tmp_path)
+    rec = {
+        "id": 5,
+        "timestamp": "2026-01-01T00:00:00",
+        "image_path": None,
+        "thumbnail_path": None,
+        "prediction": "C",
+        "confidence": 0.8,
+        "corrected_label": None,
+        "quality_status": "ok",
+    }
+    win._on_history_selected(rec)  # 进 reviewing
+    ctrl.status_updated.emit(STATUS_RUNNING)
+    assert "历史图像" in win.top_bar._run.text()

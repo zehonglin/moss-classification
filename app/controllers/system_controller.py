@@ -368,8 +368,14 @@ class SystemWorker(QObject):
         logger.info("Processing loop finished.")
 
     def get_stats(self) -> dict:
-        """返回吞吐统计（每小时托盘数、平均处理耗时、超时次数等）。"""
+        """返回吞吐统计（每小时托盘数、平均处理耗时、超时次数等）+ 磁盘剩余 GB（I1）。"""
         elapsed_h = max((time.time() - self.stats["start_time"]) / 3600.0, 1e-6)
+        # 磁盘剩余 GB（供 UI 顶部统计栏显示；查询失败兜底 0）
+        save_dir = self.config.get("data_paths.collected_data_directory", "data/images/")
+        try:
+            _, free_gb, _ = self._disk_monitor.check_space(save_dir)
+        except Exception:
+            free_gb = 0.0
         return {
             "processed": self.stats["processed"],
             "timeouts": self.stats["timeouts"],
@@ -377,6 +383,7 @@ class SystemWorker(QObject):
             "quality_rejects": self.stats["quality_rejects"],
             "per_hour": self.stats["processed"] / elapsed_h,
             "avg_ms": self.stats["total_processing_ms"] / max(self.stats["processed"], 1),
+            "free_gb": free_gb,
         }
 
     def stop_loop(self):

@@ -238,16 +238,16 @@ class MainWindow(QMainWindow):
         """从 config/controller 填充 ParamSidebar 的初始值（模型列表 / 阈值 / 触发模式）。
 
         ParamSidebar 构造时不接 controller，这些值由 MainWindow 注入。
+        通过公共方法 set_models / set_threshold 填充，不直访私有成员。
         """
         # 模型列表
         models = self.controller.get_available_models() or []
         if models:
-            self.sidebar._model.addItems(models)
+            self.sidebar.set_models(models)
         current_model = self.config.get("model_settings.current_model_name")
-        if current_model and self.sidebar._model.findText(current_model) >= 0:
-            self.sidebar._model.setCurrentText(current_model)
+        self.sidebar.set_current_model(current_model)
         # 置信度阈值
-        self.sidebar._thr.setValue(self.threshold)
+        self.sidebar.set_threshold(self.threshold)
         # 触发模式（联动软件间隔行可见性）
         cur_mode = self.config.get("camera_settings.trigger.mode", "preview")
         self.sidebar.set_trigger_mode(cur_mode)
@@ -266,6 +266,7 @@ class MainWindow(QMainWindow):
         c.camera_info.connect(self._on_cam_info)
         c.grade_summary_updated.connect(self.top_bar.set_grade_summary)
         c.stats_updated.connect(self._on_stats)
+        c.model_loaded.connect(self._on_model_loaded)
 
     # ================================================================
     # 信号处理
@@ -283,13 +284,17 @@ class MainWindow(QMainWindow):
         self._last_rec = rec
 
     def _on_status(self, status):
-        """controller 状态 → top_bar 运行状态文案。"""
+        """controller 状态 → top_bar 运行状态文案。
+
+        reviewing 时即使 status=RUNNING 也显示"历史图像"（不抢回 live）。
+        """
         self._status = status
         if status == STATUS_IDLE:
             self.top_bar.set_run_state("idle")
         elif status in (STATUS_PREVIEWING, STATUS_RUNNING):
-            if not self.camera._reviewing:
-                self.top_bar.set_run_state("live")
+            self.top_bar.set_run_state(
+                "history" if self.camera.is_reviewing() else "live"
+            )
 
     def _on_warn(self, msg):
         self.toasts.show(msg, severity=severity_for(msg))
@@ -301,8 +306,20 @@ class MainWindow(QMainWindow):
         self.toasts.show(msg, severity="warn")
 
     def _on_stats(self, stats):
-        """吞吐统计（per_hour/avg_ms）—— 新 UI 由 grade_summary 承载产量，吞吐预留。"""
-        pass
+        """吞吐统计路由：磁盘显示（I1）+ 工程师模式吞吐标签（I4）。"""
+        free_gb = stats.get("free_gb", 0)
+        self.top_bar.set_disk(f"{free_gb:.0f}GB 可用")
+        self.sidebar.set_throughput(stats)
+
+    def _on_model_loaded(self, ok, model_name):
+        """模型后台加载完成（C2）：失败时 toast + combo 恢复到当前实际模型。"""
+        if ok:
+            logger.info(f"模型已加载: {model_name}")
+            return
+        self.toasts.show(f"模型加载失败: {model_name}", severity="danger")
+        # combo 恢复到 config 里当前实际加载的模型，避免显示一个未加载的模型名
+        current = self.config.get("model_settings.current_model_name") or ""
+        self.sidebar.set_current_model(current)
 
     # ---- 历史选中 ----
 
@@ -331,8 +348,12 @@ class MainWindow(QMainWindow):
 
     def _on_page_change(self, page):
         self._page = max(page, 1)
+        filt = self._filter or {}
         rows, total = self.controller.search_records_paged(
-            page=self._page, page_size=50
+            prediction=filt.get("prediction"),
+            quality_status=filt.get("quality_status"),
+            page=self._page,
+            page_size=50,
         )
         self.history.set_page(rows, total, self._page, 50)
 
@@ -396,7 +417,7 @@ class MainWindow(QMainWindow):
         self._popup.grade_selected.connect(
             lambda label: self._apply_correction(rec, label)
         )
-        self._popup.popup_for(rec, self.banner._edit)
+        self._popup.popup_for(rec, self.banner.edit_button())
 
     def _apply_correction(self, rec, label):
         """提交纠错到 controller + 更新本地 record + 刷新横幅 + 刷新列表。"""
@@ -451,15 +472,19 @@ class MainWindow(QMainWindow):
     # ================================================================
 
     def _on_esc(self):
-        if self.camera._reviewing:
+        if self.camera.is_reviewing():
             self._exit_history()
         elif self._popup is not None:
             self._popup.close()
 
     def _toggle_fullscreen(self):
-        if self.camera._reviewing:
-            self.camera._view.setWindowFlags(Qt.Window)
-            self.camera._view.showFullScreen()
+        """全屏查看原图 — 暂禁用（no-op）。
+
+        旧实现把 _view 设为 Qt.Window 顶层全屏，但无恢复路径，会令 _view 永久脱离
+        CameraView 布局。MVP 阶段隐藏：双击仍触发本方法但不做任何事，待正确实现
+        toggle + 恢复 window flags/reparent 后再启用。
+        """
+        return
 
     # ================================================================
     # 清理

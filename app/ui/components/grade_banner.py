@@ -174,3 +174,12 @@ class GradeBanner(QFrame):
         if on:
             self._tag.setText("正在查看历史记录")
             self._tag.show()
+
+    # ---------- public accessors ----------
+
+    def edit_button(self):
+        """返回纠错按钮 widget（供 CorrectionPopup popup_for 锚定）。
+
+        替代上层直访 `banner._edit` 私有成员。
+        """
+        return self._edit

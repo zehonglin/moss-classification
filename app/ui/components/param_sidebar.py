@@ -105,6 +105,11 @@ class ParamSidebar(QFrame):
         for b in (self._b_conn, self._b_start, self._b_stop, self._b_cap):
             v.addWidget(b)
 
+        # 吞吐统计标签（工程师模式可见；由上层 _on_stats 更新）
+        self._throughput = QLabel("平均 0ms · 超时 0 · 拒采 0")
+        self._throughput.setStyleSheet("color:#64748b;font-size:10px;padding-top:4px;")
+        v.addWidget(self._throughput)
+
     # ================================================================
     # 纯函数（TDD 重点）：仅 software_continuous 返回 True
     # ================================================================
@@ -131,6 +136,38 @@ class ParamSidebar(QFrame):
         # 不会触发，所以显式调用一次 _on_trigger 保证状态一致。
         self._trigger.setCurrentIndex(idx)
         self._on_trigger(self._TRIGGER_KEYS[idx])
+
+    def set_models(self, models: list):
+        """填充模型 combo（替代直访 `_model.addItems`）。"""
+        self._model.addItems(models)
+
+    def set_current_model(self, name: str):
+        """设置当前模型 combo（用于初始化 / 模型加载失败后恢复）。
+
+        若 name 不在 combo 列表中，不做任何操作（避免选空）。
+        """
+        if name and self._model.findText(name) >= 0:
+            self._model.setCurrentText(name)
+
+    def get_current_model(self) -> str:
+        """返回当前模型 combo 文本（供模型加载失败时恢复）。"""
+        return self._model.currentText()
+
+    def set_threshold(self, value: float):
+        """设置置信度阈值（替代直访 `_thr.setValue`）。"""
+        self._thr.setValue(value)
+
+    def set_throughput(self, stats: dict):
+        """更新底部吞吐标签（平均耗时 / 超时 / 拒采）。
+
+        仅工程师模式可见；操作员模式 ParamSidebar 不在布局中，更新无副作用。
+        """
+        avg_ms = stats.get("avg_ms", 0)
+        timeouts = stats.get("processing_timeout_count", 0)
+        rejects = stats.get("quality_rejects", 0)
+        self._throughput.setText(
+            f"平均 {avg_ms:.0f}ms · 超时 {timeouts} · 拒采 {rejects}"
+        )
 
     # ================================================================
     # internals：构建分组

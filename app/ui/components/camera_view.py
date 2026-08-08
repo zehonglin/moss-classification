@@ -175,3 +175,9 @@ class CameraView(QWidget):
         # setPixmap 会清 text → 先 clear pixmap 再 setText 占位
         self._view.setPixmap(QPixmap())
         self._view.setText("实时画面")
+
+    # ---------- public accessors ----------
+
+    def is_reviewing(self) -> bool:
+        """返回是否处于选中历史态（替代上层直访 `_reviewing` 私有成员）。"""
+        return self._reviewing
