@@ -58,7 +58,7 @@ UI 侧边栏切换；DebouncerTime 可调；曝光固定（防拖影，配补光
 - **原图**：`data/images/moss_<时间戳>.png`（PNG 无损，训练/大图查看）
 - **缩略图**：`data/images/thumb/moss_<时间戳>.png`（300px，界面展示）
 - **DB**：`data/moss.db`，records 表含 thumbnail_path
-- **滚动归档**：保留 `storage.retention_days`（默认 60 天）；启动只报告不删，24h 定时清理
+- **滚动归档**：保留 `storage.retention_days`（默认 60 天）；启动只报告不删，按 `cleanup_interval_hours`（默认 1h）定时清理
 - **置信度拒识**：低于 `confidence_threshold`（默认 0.6）标"⚠️需复检"，DB 存原始数据不被污染
 - **纠错闭环**：纠错时图片归档到 `data/corrections/<正确标签>/`（ImageFolder 兼容，可直接重训）
 
@@ -138,12 +138,83 @@ requirements.txt
 run.py
 ```
 
-## 配置（config.json 关键项）
+## 配置（config/config.json）
 
-- `camera_settings.trigger`：mode / source / activation / debouncer_time_us / grab_timeout_ms / software_interval_ms
-- `camera_settings.exposure`：固定曝光（微秒）
-- `model_settings.confidence_threshold`：拒识阈值
-- `storage.retention_days`：滚动归档保留天数
+主配置文件。UI 修改的参数（分辨率 / 曝光 / 触发模式 / 防抖 / 软件间隔 / 置信阈值 / 质量阈值）会去抖（约 2s）原子写回本文件；缺失的键自动合并自内置默认值（`app/utils/config_manager.py`）。下表「默认」列为内置默认（缺失键时回退值），随仓库附带的 `config.json` 可能已设为实际产线值。
+
+### model_settings — 模型
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `current_model_name` | str | `efficientnet_b0` | 当前加载的模型文件名（`.onnx` 产线 / `.pth` 开发）；模型切换或加载失败后用于恢复 |
+| `models_directory` | str | `models/` | 模型文件目录 |
+| `confidence_threshold` | float | `0.6` | 置信度拒识阈值，低于此值标"⚠️需复检"（DB 存原始数据不被污染） |
+
+### data_paths — 数据路径
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `collected_data_directory` | str | `data/images/` | 原图与缩略图保存目录 |
+| `db_filename` | str | `data/moss.db` | SQLite 数据库路径 |
+| `corrections_directory` | str | `data/corrections/` | 纠错样本归档目录（ImageFolder 兼容，可直接重训） |
+
+### storage — 存储与清理
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `image_format` | str | `png` | 原图格式；`png` 无损，其它值按 JPEG（有损）保存 |
+| `image_quality` | int | `95` | JPEG 保存质量（仅 `image_format`≠`png` 时生效） |
+| `thumbnail_max_size` | int | `300` | 缩略图最大边像素 |
+| `retention_days` | int | `60` | 名义保留天数；超期记录由定时清理删除 |
+| `disk_watermark_gb` | int | `50` | 磁盘剩余低于此值触发水位清理（从最旧开始删） |
+| `cleanup_min_age_days` | int | `7` | 水位清理时保留最近 N 天的数据不删 |
+| `cleanup_interval_hours` | int | `1` | 定时清理周期（小时） |
+| `critical_free_gb` | int | `5` | 剩余低于此值**停止采集**并红字告警 |
+
+### performance — 性能
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `processing_timeout_ms` | int | `3000` | 单帧处理（取图+推理+存储）超时阈值，超过则报错提示检查推理/存储性能 |
+
+### quality_check — 入图质量检查
+
+启用后，过曝/欠曝/模糊帧仍保存原图并入库（`quality_status` 标记），但不产出品级。
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `enabled` | bool | `true` | 是否启用质量检查 |
+| `overexposure_threshold` | float | `235.0` | 灰度均值 ≥ 此值判过曝 |
+| `underexposure_threshold` | float | `25.0` | 灰度均值 ≤ 此值判欠曝 |
+| `blur_threshold` | float | `50.0` | Laplacian 方差低于此值判模糊 |
+| `consecutive_reject_alert` | int | `5` | 连续拒采达此次数触发告警 |
+
+### camera_settings — 相机
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `driver_type` | str | `hikvision` | 相机驱动：`hikvision`（海康真相机）/ `mock`（开发模拟） |
+| `camera_serial` | str | `""` | 指定相机序列号；空串取枚举到的第一台 |
+| `resolution_width` | int | `2048` | 采集分辨率宽；UI 可调（256–4096，步进 64），点"应用"下发并写回 |
+| `resolution_height` | int | `2048` | 采集分辨率高（同上） |
+| `exposure` | int | `10000` | 固定曝光（微秒）；触发抓拍禁用 auto 以保证每张曝光一致 |
+
+`camera_settings.trigger` — 触发（四档语义见上方「相机触发（四档）」）：
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `mode` | str | `hardware` | 触发模式：`preview` / `hardware` / `software_single` / `software_continuous` |
+| `source` | str | `Line0` | 硬件触发源（光电传感器接线） |
+| `activation` | str | `RisingEdge` | 触发沿 |
+| `debouncer_time_us` | int | `5000` | 触发防抖（微秒） |
+| `grab_timeout_ms` | int | `2000` | 单帧抓取超时（毫秒） |
+| `software_interval_ms` | int | `1000` | `software_continuous` 模式取图间隔（毫秒） |
+
+### ui（可选）— 界面
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `engineer_mode_password` | str | 未配置 | 工程师模式密码；未配置/空串 → 切工程师模式直接放行；配置后需精确匹配才能进入（产线防误调参数）。不在默认 config 中，按需添加 `ui` 段 |
 
 ## 依赖
 
